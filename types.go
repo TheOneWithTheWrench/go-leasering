@@ -1,6 +1,7 @@
 package leasering
 
 import (
+	"database/sql"
 	"sync"
 	"time"
 )
@@ -8,39 +9,40 @@ import (
 // Ring represents the consistent hashing ring state.
 type Ring struct {
 	mu              sync.RWMutex
-	nodes           map[string]*Node // Quick lookup for a node's vnodes
-	vnodes          []VNode          // Sorted slice of all active vnodes for fast lookups
+	nodes           map[string]*node // Quick lookup for a node's vnodes
+	vnodes          []vnode          // Sorted slice of all active vnodes for fast lookups
 	ownedPartitions []int            // Cached list of partitions owned by this node
 	ringID          string
 	nodeID          string
 	options         options
-	coordinator     *Coordinator // Handles lifecycle and background workers
+	db              *sql.DB      // Database connection for persistence
+	coordinator     *coordinator // Handles lifecycle and background workers
 }
 
-// Node represents a member of the ring.
-type Node struct {
+// node represents a member of the ring.
+type node struct {
 	ID     string
-	VNodes []VNode
+	VNodes []vnode
 }
 
-// VNode represents a virtual node's position on the ring and its lease.
-type VNode struct {
+// vnode represents a virtual node's position on the ring and its lease.
+type vnode struct {
 	NodeID    string
 	Index     int
 	Position  int
 	ExpiresAt time.Time
 }
 
-// Lease represents a persisted lease record in the database.
-type Lease struct {
+// lease represents a persisted lease record in the database.
+type lease struct {
 	Position  int
 	NodeID    string
 	VNodeIdx  int
 	ExpiresAt time.Time
 }
 
-// Proposal represents a join proposal record in the database.
-type Proposal struct {
+// proposal represents a join proposal record in the database.
+type proposal struct {
 	PredecessorPos int
 	NewNodeID      string
 	NewVNodeIdx    int

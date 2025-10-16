@@ -52,11 +52,6 @@ coordinating with other nodes to distribute partitions across the cluster.`,
 func runNode(cmd *cobra.Command, args []string) error {
 	var ctx = context.Background()
 
-	// Validate ringID
-	if err := leasering.ValidateRingID(ringID); err != nil {
-		return fmt.Errorf("invalid ring-id: %w", err)
-	}
-
 	// Connect to database
 	fmt.Printf("Connecting to database...\n")
 	var db, err = sql.Open("postgres", dbURL)
@@ -72,6 +67,7 @@ func runNode(cmd *cobra.Command, args []string) error {
 	// Create ring with options
 	fmt.Printf("Creating ring node: %s\n", nodeID)
 	var ring = leasering.NewRing(
+		db,
 		ringID,
 		nodeID,
 		leasering.WithVNodeCount(vnodeCount),
@@ -80,7 +76,7 @@ func runNode(cmd *cobra.Command, args []string) error {
 
 	// Start the ring (join and begin background workers)
 	fmt.Printf("Joining ring '%s'...\n", ringID)
-	if err := ring.Start(ctx, db); err != nil {
+	if err := ring.Start(ctx); err != nil {
 		return fmt.Errorf("failed to start ring: %w", err)
 	}
 
@@ -108,7 +104,7 @@ func runNode(cmd *cobra.Command, args []string) error {
 				os.Exit(1)
 			}
 			fmt.Printf("\n\nReceived signal %v, shutting down gracefully...\n", sig)
-			if err := ring.Stop(ctx, db); err != nil {
+			if err := ring.Stop(ctx); err != nil {
 				return fmt.Errorf("failed to stop ring: %w", err)
 			}
 			fmt.Printf("✓ Gracefully left ring\n")

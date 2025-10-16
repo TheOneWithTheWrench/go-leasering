@@ -23,25 +23,34 @@ var (
 
 // NewRing creates a new Ring instance.
 // The ringID must be a valid PostgreSQL identifier (lowercase letters, numbers, underscores, starting with a letter).
-func NewRing(ringID, nodeID string, opts ...Option) *Ring {
+// Panics if ringID is invalid.
+func NewRing(db *sql.DB, ringID, nodeID string, opts ...Option) *Ring {
+	if err := ValidateRingID(ringID); err != nil {
+		panic(fmt.Sprintf("invalid ringID: %v", err))
+	}
+
 	var options = defaultOptions()
 	for _, opt := range opts {
 		opt(&options)
 	}
 
 	return &Ring{
-		nodes:           make(map[string]*Node),
-		vnodes:          make([]VNode, 0),
+		nodes:           make(map[string]*node),
+		vnodes:          make([]vnode, 0),
 		ownedPartitions: make([]int, 0),
 		ringID:          ringID,
 		nodeID:          nodeID,
 		options:         options,
+		db:              db,
 	}
 }
 
 // GetOwnedPartitions returns all partition numbers this node is currently responsible for.
 // Partition numbers range from 0 to ringSize-1 (default 0-1023).
-// This is a hot path function and returns a cached result.
+//
+// This is a hot path function optimized for frequent calls. It returns a reference to the
+// internal cached slice for performance. IMPORTANT: Do not modify the returned slice, as it
+// will corrupt internal state. The slice contents are only updated when ring topology changes.
 func (r *Ring) GetOwnedPartitions() []int {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -50,39 +59,34 @@ func (r *Ring) GetOwnedPartitions() []int {
 
 // Start begins the background processes: join, lease renewal, ring refresh, and proposal acceptance.
 // This will block until the node successfully joins the ring.
-func (r *Ring) Start(ctx context.Context, db *sql.DB) error {
-	// Validate ringID before using it in database operations
-	if err := ValidateRingID(r.ringID); err != nil {
-		return fmt.Errorf("invalid ringID: %w", err)
-	}
-
+func (r *Ring) Start(ctx context.Context) error {
 	// Run migration
-	if err := database.Migrate(db, r.ringID); err != nil {
+	if err := database.Migrate(r.db, r.ringID); err != nil {
 		return fmt.Errorf("failed to migrate database: %w", err)
 	}
 
 	// Create components
 	var (
-		queries     = database.NewQueries(db, r.ringID)
-		store       = NewLeaseStore(r.ringID, queries)
-		membership  = NewMembership(r, store, r.nodeID, r.options.leaseTTL, r.options.proposalTTL)
-		coordinator = NewCoordinator(r, membership, store, r.options)
+		queries     = database.NewQueries(r.db, r.ringID)
+		store       = newLeaseStore(r.ringID, queries)
+		membership  = newMembership(r, store, r.nodeID, r.options.leaseTTL, r.options.proposalTTL)
+		coordinator = newCoordinator(r, membership, store, r.options)
 	)
 
 	// Store coordinator for Stop to use
 	r.coordinator = coordinator
 
 	// Start the coordinator
-	return coordinator.Start(ctx)
+	return coordinator.start(ctx)
 }
 
 // Stop gracefully shuts down and removes this node's leases.
-func (r *Ring) Stop(ctx context.Context, db *sql.DB) error {
+func (r *Ring) Stop(ctx context.Context) error {
 	if r.coordinator == nil {
 		return fmt.Errorf("ring not started")
 	}
 
-	return r.coordinator.Stop(ctx)
+	return r.coordinator.stop(ctx)
 }
 
 // ValidateRingID checks if the ringID is valid for use as a PostgreSQL identifier.
@@ -104,17 +108,17 @@ func ValidateRingID(ringID string) error {
 
 // rebuildFromLeases rebuilds the in-memory ring state from a list of leases.
 // This recalculates owned partitions.
-func (r *Ring) rebuildFromLeases(leases []*Lease) {
+func (r *Ring) rebuildFromLeases(leases []*lease) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	// Clear existing state
-	r.nodes = make(map[string]*Node)
-	r.vnodes = make([]VNode, 0, len(leases))
+	r.nodes = make(map[string]*node)
+	r.vnodes = make([]vnode, 0, len(leases))
 
 	// Rebuild from leases
 	for _, lease := range leases {
-		var vnode = VNode{
+		var v = vnode{
 			NodeID:    lease.NodeID,
 			Index:     lease.VNodeIdx,
 			Position:  lease.Position,
@@ -122,18 +126,18 @@ func (r *Ring) rebuildFromLeases(leases []*Lease) {
 		}
 
 		// Add to nodes map
-		var node, exists = r.nodes[vnode.NodeID]
+		var n, exists = r.nodes[v.NodeID]
 		if !exists {
-			node = &Node{
-				ID:     vnode.NodeID,
-				VNodes: make([]VNode, 0),
+			n = &node{
+				ID:     v.NodeID,
+				VNodes: []vnode{},
 			}
-			r.nodes[vnode.NodeID] = node
+			r.nodes[v.NodeID] = n
 		}
-		node.VNodes = append(node.VNodes, vnode)
+		n.VNodes = append(n.VNodes, v)
 
 		// Add to vnodes slice
-		r.vnodes = append(r.vnodes, vnode)
+		r.vnodes = append(r.vnodes, v)
 	}
 
 	// Sort vnodes by position
@@ -147,23 +151,23 @@ func (r *Ring) rebuildFromLeases(leases []*Lease) {
 
 // addVNode adds a single vnode to the ring and recalculates owned partitions.
 // This is used when accepting proposals to immediately update local state.
-func (r *Ring) addVNode(vnode VNode) {
+func (r *Ring) addVNode(v vnode) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	// Add to nodes map
-	var node, exists = r.nodes[vnode.NodeID]
+	var n, exists = r.nodes[v.NodeID]
 	if !exists {
-		node = &Node{
-			ID:     vnode.NodeID,
-			VNodes: make([]VNode, 0),
+		n = &node{
+			ID:     v.NodeID,
+			VNodes: []vnode{},
 		}
-		r.nodes[vnode.NodeID] = node
+		r.nodes[v.NodeID] = n
 	}
-	node.VNodes = append(node.VNodes, vnode)
+	n.VNodes = append(n.VNodes, v)
 
 	// Add to vnodes slice and keep sorted
-	r.vnodes = append(r.vnodes, vnode)
+	r.vnodes = append(r.vnodes, v)
 	sort.Slice(r.vnodes, func(i, j int) bool {
 		return r.vnodes[i].Position < r.vnodes[j].Position
 	})
@@ -175,53 +179,71 @@ func (r *Ring) addVNode(vnode VNode) {
 // calculateOwnedPartitions computes which partitions this node owns.
 // Must be called with lock held.
 func (r *Ring) calculateOwnedPartitions() []int {
+	if len(r.vnodes) == 0 {
+		return []int{}
+	}
+
+	var partitions = make([]int, 0)
+	for i, v := range r.vnodes {
+		if v.NodeID != r.nodeID {
+			continue
+		}
+
+		var rangePartitions = r.partitionsForVNode(i)
+		partitions = append(partitions, rangePartitions...)
+	}
+
+	return partitions
+}
+
+// partitionsForVNode returns all partition numbers owned by the vnode at the given index.
+// In consistent hashing, a vnode owns partitions from its predecessor (exclusive) to itself (inclusive).
+func (r *Ring) partitionsForVNode(vnodeIdx int) []int {
+	var (
+		ringSize = r.options.ringSize
+		end      = r.vnodes[vnodeIdx].Position
+	)
+
+	// Special case: only one vnode in the ring owns everything
+	if len(r.vnodes) == 1 {
+		var all = make([]int, ringSize)
+		for p := range ringSize {
+			all[p] = p
+		}
+		return all
+	}
+
+	// Find predecessor's position (with wrap-around)
+	var start int
+	if vnodeIdx == 0 {
+		start = r.vnodes[len(r.vnodes)-1].Position
+	} else {
+		start = r.vnodes[vnodeIdx-1].Position
+	}
+
+	// Collect partitions in the range (start, end]
+	return r.partitionsInRange(start, end)
+}
+
+// partitionsInRange returns all partitions in the range (start, end], handling ring wrap-around.
+func (r *Ring) partitionsInRange(start, end int) []int {
 	var (
 		ringSize   = r.options.ringSize
 		partitions = make([]int, 0)
 	)
 
-	if len(r.vnodes) == 0 {
-		return partitions
-	}
-
-	// Each vnode owns the range from the previous vnode's position (exclusive) to its own position (inclusive).
-	for i, vnode := range r.vnodes {
-		if vnode.NodeID != r.nodeID {
-			continue
+	if start >= end {
+		// Wrap-around case: from start+1 to ringSize-1, then from 0 to end
+		for p := start + 1; p < ringSize; p++ {
+			partitions = append(partitions, p)
 		}
-
-		var (
-			start int
-			end   = vnode.Position
-		)
-
-		if i == 0 {
-			// Wrap around: from last vnode to this one
-			if len(r.vnodes) == 1 {
-				// Only vnode owns entire ring
-				for p := range ringSize {
-					partitions = append(partitions, p)
-				}
-				continue
-			}
-			start = r.vnodes[len(r.vnodes)-1].Position
-		} else {
-			start = r.vnodes[i-1].Position
+		for p := 0; p <= end; p++ {
+			partitions = append(partitions, p)
 		}
-
-		// Handle wrap-around case
-		if start >= end {
-			for p := start + 1; p < ringSize; p++ {
-				partitions = append(partitions, p)
-			}
-			for p := 0; p <= end; p++ {
-				partitions = append(partitions, p)
-			}
-		} else {
-			// Normal case: add all positions from start (exclusive) to end (inclusive)
-			for p := start + 1; p <= end; p++ {
-				partitions = append(partitions, p)
-			}
+	} else {
+		// Normal case: from start+1 to end
+		for p := start + 1; p <= end; p++ {
+			partitions = append(partitions, p)
 		}
 	}
 
@@ -328,7 +350,7 @@ func (r *Ring) getSuccessorPosition(position int) int {
 }
 
 // getVNodeAtPosition returns the vnode at the given position, if it exists.
-func (r *Ring) getVNodeAtPosition(position int) *VNode {
+func (r *Ring) getVNodeAtPosition(position int) *vnode {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
@@ -353,7 +375,7 @@ func (r *Ring) updateMyVNodeExpirations(expiresAt time.Time) {
 }
 
 // isExpired checks if a vnode's lease has expired.
-func isExpired(vnode VNode, now time.Time) bool {
+func isExpired(vnode vnode, now time.Time) bool {
 	return now.After(vnode.ExpiresAt)
 }
 
@@ -365,7 +387,7 @@ func (r *Ring) String() string {
 	var b strings.Builder
 
 	b.WriteString(fmt.Sprintf("Ring: %s (Node: %s)\n", r.ringID, r.nodeID))
-	b.WriteString(fmt.Sprintf("Size: %d | Nodes: %d | VNodes: %d\n",
+	b.WriteString(fmt.Sprintf("Size: %d | Nodes: %d | vnodes: %d\n",
 		r.options.ringSize, len(r.nodes), len(r.vnodes)))
 	b.WriteString(fmt.Sprintf("Owned Partitions: %d\n", len(r.ownedPartitions)))
 

@@ -9,29 +9,29 @@ import (
 )
 
 // LeaseStore handles all database operations for leases and proposals.
-type LeaseStore struct {
+type leaseStore struct {
 	ringID  string
 	queries *database.Queries
 }
 
 // NewLeaseStore creates a new LeaseStore for the given ring.
-func NewLeaseStore(ringID string, queries *database.Queries) *LeaseStore {
-	return &LeaseStore{
+func newLeaseStore(ringID string, queries *database.Queries) *leaseStore {
+	return &leaseStore{
 		ringID:  ringID,
 		queries: queries,
 	}
 }
 
 // ListLeases returns all active leases in the ring.
-func (ls *LeaseStore) ListLeases(ctx context.Context) ([]*Lease, error) {
+func (ls *leaseStore) ListLeases(ctx context.Context) ([]*lease, error) {
 	var records, err = ls.queries.ListLeases(ctx, ls.ringID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list leases: %w", err)
 	}
 
-	var leases = make([]*Lease, len(records))
+	var leases = make([]*lease, len(records))
 	for i, record := range records {
-		leases[i] = &Lease{
+		leases[i] = &lease{
 			Position:  record.Position,
 			NodeID:    record.NodeID,
 			VNodeIdx:  record.VNodeIdx,
@@ -43,7 +43,7 @@ func (ls *LeaseStore) ListLeases(ctx context.Context) ([]*Lease, error) {
 }
 
 // GetLease returns the lease at the given position, or nil if not found.
-func (ls *LeaseStore) GetLease(ctx context.Context, position int) (*Lease, error) {
+func (ls *leaseStore) GetLease(ctx context.Context, position int) (*lease, error) {
 	var record, err = ls.queries.GetLease(ctx, ls.ringID, position)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get lease at position %d: %w", position, err)
@@ -53,7 +53,7 @@ func (ls *LeaseStore) GetLease(ctx context.Context, position int) (*Lease, error
 		return nil, nil
 	}
 
-	return &Lease{
+	return &lease{
 		Position:  record.Position,
 		NodeID:    record.NodeID,
 		VNodeIdx:  record.VNodeIdx,
@@ -62,7 +62,7 @@ func (ls *LeaseStore) GetLease(ctx context.Context, position int) (*Lease, error
 }
 
 // SetLease writes a lease to the database.
-func (ls *LeaseStore) SetLease(ctx context.Context, lease *Lease) error {
+func (ls *leaseStore) SetLease(ctx context.Context, lease *lease) error {
 	var record = &database.LeaseRecord{
 		RingID:    ls.ringID,
 		Position:  lease.Position,
@@ -79,7 +79,7 @@ func (ls *LeaseStore) SetLease(ctx context.Context, lease *Lease) error {
 }
 
 // DeleteLease removes a lease from the database.
-func (ls *LeaseStore) DeleteLease(ctx context.Context, position int) error {
+func (ls *leaseStore) DeleteLease(ctx context.Context, position int) error {
 	if err := ls.queries.DeleteLease(ctx, ls.ringID, position); err != nil {
 		return fmt.Errorf("failed to delete lease at position %d: %w", position, err)
 	}
@@ -87,15 +87,15 @@ func (ls *LeaseStore) DeleteLease(ctx context.Context, position int) error {
 }
 
 // ListAllProposals returns all active proposals in the ring.
-func (ls *LeaseStore) ListAllProposals(ctx context.Context) ([]*Proposal, error) {
+func (ls *leaseStore) ListAllProposals(ctx context.Context) ([]*proposal, error) {
 	var records, err = ls.queries.ListAllProposals(ctx, ls.ringID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list proposals: %w", err)
 	}
 
-	var proposals = make([]*Proposal, len(records))
+	var proposals = make([]*proposal, len(records))
 	for i, record := range records {
-		proposals[i] = &Proposal{
+		proposals[i] = &proposal{
 			PredecessorPos: record.PredecessorPos,
 			NewNodeID:      record.NewNodeID,
 			NewVNodeIdx:    record.NewVNodeIdx,
@@ -108,7 +108,7 @@ func (ls *LeaseStore) ListAllProposals(ctx context.Context) ([]*Proposal, error)
 }
 
 // SetProposal writes a proposal to the database.
-func (ls *LeaseStore) SetProposal(ctx context.Context, proposal *Proposal) error {
+func (ls *leaseStore) SetProposal(ctx context.Context, proposal *proposal) error {
 	var record = &database.ProposalRecord{
 		RingID:         ls.ringID,
 		PredecessorPos: proposal.PredecessorPos,
@@ -126,7 +126,7 @@ func (ls *LeaseStore) SetProposal(ctx context.Context, proposal *Proposal) error
 }
 
 // DeleteProposal removes a proposal from the database.
-func (ls *LeaseStore) DeleteProposal(ctx context.Context, predecessorPos int, newNodeID string, newVNodeIdx int) error {
+func (ls *leaseStore) DeleteProposal(ctx context.Context, predecessorPos int, newNodeID string, newVNodeIdx int) error {
 	if err := ls.queries.DeleteProposal(ctx, ls.ringID, predecessorPos, newNodeID, newVNodeIdx); err != nil {
 		return fmt.Errorf("failed to delete proposal: %w", err)
 	}
@@ -134,18 +134,18 @@ func (ls *LeaseStore) DeleteProposal(ctx context.Context, predecessorPos int, ne
 }
 
 // RenewLeases renews all leases for the given positions.
-func (ls *LeaseStore) RenewLeases(ctx context.Context, nodeID string, positions []int, ttl time.Duration) error {
+func (ls *leaseStore) RenewLeases(ctx context.Context, nodeID string, positions []int, ttl time.Duration) error {
 	var expiresAt = time.Now().Add(ttl)
 
 	for i, position := range positions {
-		var lease = &Lease{
+		var l = &lease{
 			Position:  position,
 			NodeID:    nodeID,
 			VNodeIdx:  i,
 			ExpiresAt: expiresAt,
 		}
 
-		if err := ls.SetLease(ctx, lease); err != nil {
+		if err := ls.SetLease(ctx, l); err != nil {
 			return err
 		}
 	}

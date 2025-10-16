@@ -11,10 +11,10 @@ import (
 func TestRing(t *testing.T) {
 	var (
 		newRing = func(nodeID string) *Ring {
-			return NewRing("test-ring", nodeID)
+			return NewRing(nil, "test_ring", nodeID)
 		}
-		newLease = func(position int, nodeID string, vnodeIdx int) *Lease {
-			return &Lease{
+		newLease = func(position int, nodeID string, vnodeIdx int) *lease {
+			return &lease{
 				Position:  position,
 				NodeID:    nodeID,
 				VNodeIdx:  vnodeIdx,
@@ -29,7 +29,7 @@ func TestRing(t *testing.T) {
 
 		// Assert
 		require.NotNil(t, sut)
-		assert.Equal(t, "test-ring", sut.ringID)
+		assert.Equal(t, "test_ring", sut.ringID)
 		assert.Equal(t, "node-1", sut.nodeID)
 		assert.NotNil(t, sut.nodes)
 		assert.NotNil(t, sut.vnodes)
@@ -53,7 +53,7 @@ func TestRing(t *testing.T) {
 		// Arrange
 		var (
 			sut    = newRing("node-1")
-			leases = []*Lease{
+			leases = []*lease{
 				newLease(100, "node-1", 0),
 				newLease(500, "node-1", 1),
 			}
@@ -76,7 +76,7 @@ func TestRing(t *testing.T) {
 		// Arrange
 		var (
 			sut    = newRing("node-1")
-			leases = []*Lease{
+			leases = []*lease{
 				newLease(100, "node-1", 0),
 				newLease(200, "node-2", 0),
 				newLease(500, "node-1", 1),
@@ -107,7 +107,7 @@ func TestRing(t *testing.T) {
 		// Arrange
 		var (
 			sut    = newRing("node-1")
-			leases = []*Lease{
+			leases = []*lease{
 				newLease(50, "node-2", 0),
 				newLease(900, "node-1", 0),
 			}
@@ -129,7 +129,7 @@ func TestRing(t *testing.T) {
 		// Arrange
 		var (
 			sut    = newRing("node-1")
-			leases = []*Lease{
+			leases = []*lease{
 				newLease(100, "node-1", 0),
 				newLease(900, "node-2", 0),
 			}
@@ -151,7 +151,7 @@ func TestRing(t *testing.T) {
 		// Arrange
 		var (
 			sut    = newRing("node-1")
-			leases = []*Lease{
+			leases = []*lease{
 				newLease(100, "node-1", 0),
 				newLease(500, "node-2", 0),
 				newLease(900, "node-3", 0),
@@ -170,7 +170,7 @@ func TestRing(t *testing.T) {
 		// Arrange
 		var (
 			sut    = newRing("node-1")
-			leases = []*Lease{
+			leases = []*lease{
 				newLease(100, "node-1", 0),
 				newLease(500, "node-2", 0),
 				newLease(900, "node-3", 0),
@@ -189,7 +189,7 @@ func TestRing(t *testing.T) {
 		// Arrange
 		var (
 			sut    = newRing("node-1")
-			leases = []*Lease{
+			leases = []*lease{
 				newLease(100, "node-1", 0),
 				newLease(500, "node-2", 0),
 				newLease(900, "node-3", 0),
@@ -239,7 +239,7 @@ func TestRing(t *testing.T) {
 		// Arrange
 		var (
 			sut    = newRing("node-1")
-			leases = []*Lease{
+			leases = []*lease{
 				newLease(100, "node-1", 0),
 				newLease(500, "node-2", 0),
 				newLease(900, "node-3", 0),
@@ -258,7 +258,7 @@ func TestRing(t *testing.T) {
 		// Arrange
 		var (
 			sut    = newRing("node-1")
-			leases = []*Lease{
+			leases = []*lease{
 				newLease(100, "node-1", 0),
 				newLease(500, "node-2", 0),
 				newLease(900, "node-3", 0),
@@ -288,7 +288,7 @@ func TestRing(t *testing.T) {
 		// Arrange
 		var (
 			sut    = newRing("node-1")
-			leases = []*Lease{
+			leases = []*lease{
 				newLease(100, "node-1", 0),
 				newLease(500, "node-2", 0),
 			}
@@ -308,7 +308,7 @@ func TestRing(t *testing.T) {
 		// Arrange
 		var (
 			sut    = newRing("node-1")
-			leases = []*Lease{
+			leases = []*lease{
 				newLease(100, "node-1", 0),
 				newLease(500, "node-2", 0),
 			}
@@ -326,7 +326,7 @@ func TestRing(t *testing.T) {
 		// Arrange
 		var (
 			now   = time.Now()
-			vnode = VNode{
+			vnode = vnode{
 				NodeID:    "node-1",
 				Position:  100,
 				ExpiresAt: now.Add(-1 * time.Second),
@@ -341,7 +341,7 @@ func TestRing(t *testing.T) {
 		// Arrange
 		var (
 			now   = time.Now()
-			vnode = VNode{
+			vnode = vnode{
 				NodeID:    "node-1",
 				Position:  100,
 				ExpiresAt: now.Add(30 * time.Second),
@@ -356,7 +356,7 @@ func TestRing(t *testing.T) {
 		// Arrange
 		var (
 			sut    = newRing("node-1")
-			leases = []*Lease{
+			leases = []*lease{
 				newLease(100, "node-1", 0),
 				newLease(300, "node-2", 0),
 				newLease(500, "node-1", 1),
@@ -369,7 +369,7 @@ func TestRing(t *testing.T) {
 		var output = sut.String()
 
 		// Assert
-		assert.Contains(t, output, "Ring: test-ring")
+		assert.Contains(t, output, "Ring: test_ring")
 		assert.Contains(t, output, "Node: node-1")
 		assert.Contains(t, output, "node-1")
 		assert.Contains(t, output, "node-2")

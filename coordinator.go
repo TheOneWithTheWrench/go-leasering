@@ -6,34 +6,38 @@ import (
 	"time"
 )
 
-// Coordinator orchestrates the ring lifecycle and background workers.
-type Coordinator struct {
+// coordinator orchestrates the ring lifecycle and background workers.
+type coordinator struct {
 	ring       *Ring
-	membership *Membership
-	store      *LeaseStore
+	membership *membership
+	store      *leaseStore
 	options    options
 	cancel     context.CancelFunc
 }
 
-// NewCoordinator creates a new Coordinator.
-func NewCoordinator(ring *Ring, membership *Membership, store *LeaseStore, opts options) *Coordinator {
-	return &Coordinator{
+// newCoordinator creates a new coordinator.
+func newCoordinator(ring *Ring, m *membership, store *leaseStore, opts options) *coordinator {
+	return &coordinator{
 		ring:       ring,
-		membership: membership,
+		membership: m,
 		store:      store,
 		options:    opts,
 	}
 }
 
-// Start begins the background processes: join, lease renewal, ring refresh, and proposal acceptance.
+// start begins the background processes: join, lease renewal, ring refresh, and proposal acceptance.
 // This will block until the node successfully joins the ring.
-func (c *Coordinator) Start(ctx context.Context) error {
-	// Phase 1: Propose join
+//
+// Context handling: The caller's context is used for the join phase. Background workers run
+// with a separate context.Background() to ensure they continue running independently of the
+// caller's context. The workers are stopped via the internal cancel function when stop() is called.
+func (c *coordinator) start(ctx context.Context) error {
+	// Phase 1: Propose join (uses caller's context)
 	if err := c.membership.ProposeJoin(ctx); err != nil {
 		return fmt.Errorf("failed to propose join: %w", err)
 	}
 
-	// Phase 2: Wait for confirmation
+	// Phase 2: Wait for confirmation (uses caller's context)
 	if err := c.waitForJoinConfirmation(ctx); err != nil {
 		return fmt.Errorf("failed to join ring: %w", err)
 	}
@@ -43,7 +47,10 @@ func (c *Coordinator) Start(ctx context.Context) error {
 		return fmt.Errorf("failed to refresh ring state after join: %w", err)
 	}
 
-	// Create cancellable context for background workers
+	// Create cancellable context for background workers.
+	// We use context.Background() instead of the caller's context because background workers
+	// need to continue running after Start() returns, independent of the caller's context.
+	// The workers are stopped via c.cancel when Stop() is called.
 	var workerCtx context.Context
 	workerCtx, c.cancel = context.WithCancel(context.Background())
 
@@ -56,8 +63,8 @@ func (c *Coordinator) Start(ctx context.Context) error {
 	return nil
 }
 
-// Stop gracefully shuts down and removes this node's leases.
-func (c *Coordinator) Stop(ctx context.Context) error {
+// stop gracefully shuts down and removes this node's leases.
+func (c *coordinator) stop(ctx context.Context) error {
 	// Cancel background workers first
 	if c.cancel != nil {
 		c.cancel()
@@ -68,7 +75,7 @@ func (c *Coordinator) Stop(ctx context.Context) error {
 }
 
 // waitForJoinConfirmation polls until all vnodes have active leases or timeout.
-func (c *Coordinator) waitForJoinConfirmation(ctx context.Context) error {
+func (c *coordinator) waitForJoinConfirmation(ctx context.Context) error {
 	var (
 		timeout   = time.After(30 * time.Second)
 		ticker    = time.NewTicker(1 * time.Second)
@@ -93,7 +100,7 @@ func (c *Coordinator) waitForJoinConfirmation(ctx context.Context) error {
 }
 
 // renewLeaseWorker periodically renews this node's leases.
-func (c *Coordinator) renewLeaseWorker(ctx context.Context) {
+func (c *coordinator) renewLeaseWorker(ctx context.Context) {
 	var ticker = time.NewTicker(c.options.renewalInterval)
 	defer ticker.Stop()
 
@@ -110,7 +117,7 @@ func (c *Coordinator) renewLeaseWorker(ctx context.Context) {
 }
 
 // refreshRingWorker periodically refreshes the ring state from the database.
-func (c *Coordinator) refreshRingWorker(ctx context.Context) {
+func (c *coordinator) refreshRingWorker(ctx context.Context) {
 	var ticker = time.NewTicker(c.options.refreshInterval)
 	defer ticker.Stop()
 
@@ -127,7 +134,7 @@ func (c *Coordinator) refreshRingWorker(ctx context.Context) {
 }
 
 // acceptProposalsWorker periodically scans for and accepts join proposals.
-func (c *Coordinator) acceptProposalsWorker(ctx context.Context) {
+func (c *coordinator) acceptProposalsWorker(ctx context.Context) {
 	var ticker = time.NewTicker(c.options.refreshInterval)
 	defer ticker.Stop()
 
@@ -144,7 +151,7 @@ func (c *Coordinator) acceptProposalsWorker(ctx context.Context) {
 }
 
 // cleanupExpiredLeasesWorker periodically checks for and removes expired leases of successors.
-func (c *Coordinator) cleanupExpiredLeasesWorker(ctx context.Context) {
+func (c *coordinator) cleanupExpiredLeasesWorker(ctx context.Context) {
 	var ticker = time.NewTicker(c.options.refreshInterval)
 	defer ticker.Stop()
 

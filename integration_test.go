@@ -21,10 +21,10 @@ func TestIntegration(t *testing.T) {
 		newCtx = func() context.Context {
 			return context.Background()
 		}
-		newRing = func(ringID, nodeID string) *Ring {
+		newRing = func(db *sql.DB, ringID, nodeID string) *Ring {
 			// Use fast intervals for testing (1s lease TTL)
 			// This gives us: renewal=333ms, refresh=500ms
-			return NewRing(ringID, nodeID, WithLeaseTTL(1*time.Second))
+			return NewRing(db, ringID, nodeID, WithLeaseTTL(1*time.Second))
 		}
 	)
 
@@ -34,11 +34,11 @@ func TestIntegration(t *testing.T) {
 		var (
 			db   = newDb(t)
 			ctx  = newCtx()
-			ring = newRing("test_ring", "node-1")
+			ring = newRing(db, "test_ring", "node-1")
 		)
 
 		// Act
-		err := ring.Start(ctx, db)
+		err := ring.Start(ctx)
 
 		// Assert
 		require.NoError(t, err)
@@ -53,7 +53,7 @@ func TestIntegration(t *testing.T) {
 		assert.Len(t, leases, 8, "should have 8 vnodes (default)")
 
 		// Cleanup
-		err = ring.Stop(ctx, db)
+		err = ring.Stop(ctx)
 		require.NoError(t, err)
 	})
 
@@ -63,19 +63,19 @@ func TestIntegration(t *testing.T) {
 		var (
 			db    = newDb(t)
 			ctx   = newCtx()
-			ring1 = newRing("test_ring", "node-1")
-			ring2 = newRing("test_ring", "node-2")
+			ring1 = newRing(db, "test_ring", "node-1")
+			ring2 = newRing(db, "test_ring", "node-2")
 		)
 
 		// Act - node-1 joins first
-		err := ring1.Start(ctx, db)
+		err := ring1.Start(ctx)
 		require.NoError(t, err)
 
 		var partitions1Before = ring1.GetOwnedPartitions()
 		assert.NotEmpty(t, partitions1Before)
 
 		// Act - node-2 joins second
-		err = ring2.Start(ctx, db)
+		err = ring2.Start(ctx)
 		require.NoError(t, err)
 
 		// Wait for node-2 to own some partitions
@@ -104,9 +104,9 @@ func TestIntegration(t *testing.T) {
 		}
 
 		// Cleanup
-		err = ring1.Stop(ctx, db)
+		err = ring1.Stop(ctx)
 		require.NoError(t, err)
-		err = ring2.Stop(ctx, db)
+		err = ring2.Stop(ctx)
 		require.NoError(t, err)
 	})
 
@@ -116,19 +116,19 @@ func TestIntegration(t *testing.T) {
 		var (
 			db    = newDb(t)
 			ctx   = newCtx()
-			ring1 = newRing("test_ring", "node-1")
-			ring2 = newRing("test_ring", "node-2")
-			ring3 = newRing("test_ring", "node-3")
+			ring1 = newRing(db, "test_ring", "node-1")
+			ring2 = newRing(db, "test_ring", "node-2")
+			ring3 = newRing(db, "test_ring", "node-3")
 		)
 
 		// Act - all nodes join sequentially
-		err := ring1.Start(ctx, db)
+		err := ring1.Start(ctx)
 		require.NoError(t, err)
 
-		err = ring2.Start(ctx, db)
+		err = ring2.Start(ctx)
 		require.NoError(t, err)
 
-		err = ring3.Start(ctx, db)
+		err = ring3.Start(ctx)
 		require.NoError(t, err)
 
 		// Wait for all nodes to own partitions
@@ -167,11 +167,11 @@ func TestIntegration(t *testing.T) {
 			len(partitions1), len(partitions2), len(partitions3))
 
 		// Cleanup
-		err = ring1.Stop(ctx, db)
+		err = ring1.Stop(ctx)
 		require.NoError(t, err)
-		err = ring2.Stop(ctx, db)
+		err = ring2.Stop(ctx)
 		require.NoError(t, err)
-		err = ring3.Stop(ctx, db)
+		err = ring3.Stop(ctx)
 		require.NoError(t, err)
 	})
 
@@ -181,13 +181,13 @@ func TestIntegration(t *testing.T) {
 		var (
 			db   = newDb(t)
 			ctx  = newCtx()
-			ring = newRing("test_ring", "node-1")
+			ring = newRing(db, "test_ring", "node-1")
 		)
 
 		// Act
-		err := ring.Start(ctx, db)
+		err := ring.Start(ctx)
 		require.NoError(t, err)
-		defer ring.Stop(ctx, db)
+		defer ring.Stop(ctx)
 
 		// Get initial lease expiration times
 		var queries = database.NewQueries(db, "test_ring")
@@ -221,16 +221,16 @@ func TestIntegration(t *testing.T) {
 		var (
 			db    = newDb(t)
 			ctx   = newCtx()
-			ring1 = newRing("test_ring", "node-1")
-			ring2 = newRing("test_ring", "node-2")
+			ring1 = newRing(db, "test_ring", "node-1")
+			ring2 = newRing(db, "test_ring", "node-2")
 		)
 
 		// Both nodes join
-		err := ring1.Start(ctx, db)
+		err := ring1.Start(ctx)
 		require.NoError(t, err)
-		defer ring1.Stop(ctx, db)
+		defer ring1.Stop(ctx)
 
-		err = ring2.Start(ctx, db)
+		err = ring2.Start(ctx)
 		require.NoError(t, err)
 
 		// Wait for both nodes to have partitions
@@ -279,15 +279,15 @@ func TestIntegration(t *testing.T) {
 		var (
 			db    = newDb(t)
 			ctx   = newCtx()
-			ring1 = newRing("test_ring", "node-1")
-			ring2 = newRing("test_ring", "node-2")
+			ring1 = newRing(db, "test_ring", "node-1")
+			ring2 = newRing(db, "test_ring", "node-2")
 		)
 
 		// Act - both nodes join
-		err := ring1.Start(ctx, db)
+		err := ring1.Start(ctx)
 		require.NoError(t, err)
 
-		err = ring2.Start(ctx, db)
+		err = ring2.Start(ctx)
 		require.NoError(t, err)
 
 		// Wait for both nodes to own partitions
@@ -296,7 +296,7 @@ func TestIntegration(t *testing.T) {
 		}, 2*time.Second, 50*time.Millisecond, "both nodes should own partitions")
 
 		// Node-2 gracefully stops
-		err = ring2.Stop(ctx, db)
+		err = ring2.Stop(ctx)
 		require.NoError(t, err)
 
 		// Verify node-2's leases are removed immediately
@@ -310,7 +310,7 @@ func TestIntegration(t *testing.T) {
 		}
 
 		// Cleanup
-		err = ring1.Stop(ctx, db)
+		err = ring1.Stop(ctx)
 		require.NoError(t, err)
 	})
 
@@ -326,8 +326,8 @@ func TestIntegration(t *testing.T) {
 
 		// Act - start 3 nodes
 		for i := range 3 {
-			rings[i] = newRing("test_ring", nodeID(i))
-			err := rings[i].Start(ctx, db)
+			rings[i] = newRing(db, "test_ring", nodeID(i))
+			err := rings[i].Start(ctx)
 			require.NoError(t, err)
 		}
 
@@ -360,7 +360,7 @@ func TestIntegration(t *testing.T) {
 
 		// Cleanup
 		for i := range 3 {
-			err := rings[i].Stop(ctx, db)
+			err := rings[i].Stop(ctx)
 			require.NoError(t, err)
 		}
 	})
@@ -371,24 +371,24 @@ func TestIntegration(t *testing.T) {
 		var (
 			db    = newDb(t)
 			ctx   = newCtx()
-			ring1 = newRing("test_ring", "node-1")
+			ring1 = newRing(db, "test_ring", "node-1")
 		)
 
 		// Start first node
-		err := ring1.Start(ctx, db)
+		err := ring1.Start(ctx)
 		require.NoError(t, err)
 
 		// Act - start 3 nodes concurrently
 		var (
-			ring2 = newRing("test_ring", "node-2")
-			ring3 = newRing("test_ring", "node-3")
-			ring4 = newRing("test_ring", "node-4")
+			ring2 = newRing(db, "test_ring", "node-2")
+			ring3 = newRing(db, "test_ring", "node-3")
+			ring4 = newRing(db, "test_ring", "node-4")
 		)
 
 		var errCh = make(chan error, 3)
-		go func() { errCh <- ring2.Start(ctx, db) }()
-		go func() { errCh <- ring3.Start(ctx, db) }()
-		go func() { errCh <- ring4.Start(ctx, db) }()
+		go func() { errCh <- ring2.Start(ctx) }()
+		go func() { errCh <- ring3.Start(ctx) }()
+		go func() { errCh <- ring4.Start(ctx) }()
 
 		// Verify all joined successfully
 		for range 3 {
@@ -405,13 +405,13 @@ func TestIntegration(t *testing.T) {
 		}, 2*time.Second, 50*time.Millisecond, "all nodes should own some partitions")
 
 		// Cleanup
-		err = ring1.Stop(ctx, db)
+		err = ring1.Stop(ctx)
 		require.NoError(t, err)
-		err = ring2.Stop(ctx, db)
+		err = ring2.Stop(ctx)
 		require.NoError(t, err)
-		err = ring3.Stop(ctx, db)
+		err = ring3.Stop(ctx)
 		require.NoError(t, err)
-		err = ring4.Stop(ctx, db)
+		err = ring4.Stop(ctx)
 		require.NoError(t, err)
 	})
 }

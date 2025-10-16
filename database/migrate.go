@@ -29,22 +29,15 @@ CREATE TABLE IF NOT EXISTS %s_proposals (
     PRIMARY KEY (ring_id, predecessor_pos, new_node_id, new_vnode_idx)
 );`
 
-	createProposalsIndexSQL = `
-CREATE INDEX IF NOT EXISTS %s_proposals_predecessor_idx
-ON %s_proposals (ring_id, predecessor_pos);`
 )
 
-// Migrate creates the leases and proposals tables with indexes.
+// Migrate creates the leases and proposals tables.
 func Migrate(db *sql.DB, tableName string) error {
 	if err := createLeasesTable(db, tableName); err != nil {
 		return err
 	}
 
 	if err := createProposalsTable(db, tableName); err != nil {
-		return err
-	}
-
-	if err := createProposalsIndex(db, tableName); err != nil {
 		return err
 	}
 
@@ -63,17 +56,6 @@ func createProposalsTable(db *sql.DB, tableName string) error {
 	var query = fmt.Sprintf(createProposalsTableSQL, tableName)
 	if _, err := db.Exec(query); err != nil {
 		return fmt.Errorf("failed to create proposals table: %w", err)
-	}
-	return nil
-}
-
-func createProposalsIndex(db *sql.DB, tableName string) error {
-	var (
-		indexName = fmt.Sprintf("%s_proposals_predecessor_idx", tableName)
-		query     = fmt.Sprintf(createProposalsIndexSQL, indexName, tableName)
-	)
-	if _, err := db.Exec(query); err != nil {
-		return fmt.Errorf("failed to create proposals index: %w", err)
 	}
 	return nil
 }

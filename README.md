@@ -23,6 +23,7 @@ import "go-leasering"
 
 // Create a ring
 ring := leasering.NewRing(
+    db,                  // PostgreSQL connection
     "my_ring",           // Ring ID (must be valid PostgreSQL identifier)
     "node-1",            // Node ID
     leasering.WithVNodeCount(8),
@@ -31,10 +32,10 @@ ring := leasering.NewRing(
 
 // Join the ring
 ctx := context.Background()
-if err := ring.Start(ctx, db); err != nil {
+if err := ring.Start(ctx); err != nil {
     log.Fatal(err)
 }
-defer ring.Stop(ctx, db)
+defer ring.Stop(ctx)
 
 // Get owned partitions
 partitions := ring.GetOwnedPartitions() // Near free to call

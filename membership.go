@@ -7,17 +7,17 @@ import (
 )
 
 // Membership handles the join/leave protocol for ring membership.
-type Membership struct {
+type membership struct {
 	ring       *Ring
-	store      *LeaseStore
+	store      *leaseStore
 	nodeID     string
 	leaseTTL   time.Duration
 	proposalTTL time.Duration
 }
 
 // NewMembership creates a new Membership coordinator.
-func NewMembership(ring *Ring, store *LeaseStore, nodeID string, leaseTTL, proposalTTL time.Duration) *Membership {
-	return &Membership{
+func newMembership(ring *Ring, store *leaseStore, nodeID string, leaseTTL, proposalTTL time.Duration) *membership {
+	return &membership{
 		ring:        ring,
 		store:       store,
 		nodeID:      nodeID,
@@ -27,12 +27,8 @@ func NewMembership(ring *Ring, store *LeaseStore, nodeID string, leaseTTL, propo
 }
 
 // ProposeJoin creates join proposals for all vnodes this node wants to claim.
-func (m *Membership) ProposeJoin(ctx context.Context) error {
-	var (
-		positions = m.ring.getMyVNodePositions()
-		now       = time.Now()
-		expiresAt = now.Add(m.proposalTTL)
-	)
+func (m *membership) ProposeJoin(ctx context.Context) error {
+	var positions = m.ring.getMyVNodePositions()
 
 	var leases, err = m.store.ListLeases(ctx)
 	if err != nil {
@@ -43,7 +39,7 @@ func (m *Membership) ProposeJoin(ctx context.Context) error {
 	// Use 5s grace period to avoid false positives during normal operation.
 	var allExpired = true
 	if len(leases) > 0 {
-		var gracePeriod = now.Add(-5 * time.Second)
+		var gracePeriod = time.Now().Add(-5 * time.Second)
 		for _, lease := range leases {
 			if lease.ExpiresAt.After(gracePeriod) {
 				allExpired = false
@@ -60,11 +56,11 @@ func (m *Membership) ProposeJoin(ctx context.Context) error {
 		var predecessorPos = m.ring.findPredecessor(position)
 
 		if predecessorPos == -1 || allExpired {
-			var lease = &Lease{
+			var lease = &lease{
 				Position:  position,
 				NodeID:    m.nodeID,
 				VNodeIdx:  i,
-				ExpiresAt: now.Add(m.leaseTTL),
+				ExpiresAt: time.Now().Add(m.leaseTTL),
 			}
 			if err := m.store.SetLease(ctx, lease); err != nil {
 				return fmt.Errorf("failed to set bootstrap lease: %w", err)
@@ -72,12 +68,12 @@ func (m *Membership) ProposeJoin(ctx context.Context) error {
 			continue
 		}
 
-		var proposal = &Proposal{
+		var proposal = &proposal{
 			PredecessorPos: predecessorPos,
 			NewNodeID:      m.nodeID,
 			NewVNodeIdx:    i,
 			ProposedPos:    position,
-			ExpiresAt:      expiresAt,
+			ExpiresAt:      time.Now().Add(m.proposalTTL),
 		}
 
 		if err := m.store.SetProposal(ctx, proposal); err != nil {
@@ -89,7 +85,7 @@ func (m *Membership) ProposeJoin(ctx context.Context) error {
 }
 
 // AcceptProposals scans for proposals targeting this node's vnodes and accepts them.
-func (m *Membership) AcceptProposals(ctx context.Context) error {
+func (m *membership) AcceptProposals(ctx context.Context) error {
 	var myPositions = m.ring.getMyPositions()
 	if len(myPositions) == 0 {
 		return nil
@@ -100,7 +96,7 @@ func (m *Membership) AcceptProposals(ctx context.Context) error {
 		return fmt.Errorf("failed to list all proposals: %w", err)
 	}
 
-	var proposalsByPred = make(map[int][]*Proposal)
+	var proposalsByPred = make(map[int][]*proposal)
 	for _, proposal := range allProposals {
 		proposalsByPred[proposal.PredecessorPos] = append(proposalsByPred[proposal.PredecessorPos], proposal)
 	}
@@ -136,7 +132,7 @@ func (m *Membership) AcceptProposals(ctx context.Context) error {
 
 			var (
 				leaseTTL = now.Add(m.leaseTTL)
-				lease    = &Lease{
+				lease    = &lease{
 					Position:  proposal.ProposedPos,
 					NodeID:    proposal.NewNodeID,
 					VNodeIdx:  proposal.NewVNodeIdx,
@@ -153,7 +149,7 @@ func (m *Membership) AcceptProposals(ctx context.Context) error {
 				return fmt.Errorf("failed to delete accepted proposal: %w", err)
 			}
 
-			m.ring.addVNode(VNode{
+			m.ring.addVNode(vnode{
 				NodeID:    proposal.NewNodeID,
 				Index:     proposal.NewVNodeIdx,
 				Position:  proposal.ProposedPos,
@@ -166,7 +162,7 @@ func (m *Membership) AcceptProposals(ctx context.Context) error {
 }
 
 // CheckJoinConfirmation verifies if this node's join proposals have been accepted.
-func (m *Membership) CheckJoinConfirmation(ctx context.Context) (bool, error) {
+func (m *membership) CheckJoinConfirmation(ctx context.Context) (bool, error) {
 	var positions = m.ring.getMyVNodePositions()
 
 	for _, position := range positions {
@@ -184,7 +180,7 @@ func (m *Membership) CheckJoinConfirmation(ctx context.Context) (bool, error) {
 }
 
 // RefreshRingState reads all leases from the database and rebuilds the in-memory ring.
-func (m *Membership) RefreshRingState(ctx context.Context) error {
+func (m *membership) RefreshRingState(ctx context.Context) error {
 	var leases, err = m.store.ListLeases(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to list leases: %w", err)
@@ -195,7 +191,7 @@ func (m *Membership) RefreshRingState(ctx context.Context) error {
 }
 
 // RenewLeases renews all of this node's leases.
-func (m *Membership) RenewLeases(ctx context.Context) error {
+func (m *membership) RenewLeases(ctx context.Context) error {
 	var positions = m.ring.getMyVNodePositions()
 
 	if err := m.store.RenewLeases(ctx, m.nodeID, positions, m.leaseTTL); err != nil {
@@ -210,7 +206,7 @@ func (m *Membership) RenewLeases(ctx context.Context) error {
 }
 
 // CleanupExpiredLeases removes expired leases of immediate successors.
-func (m *Membership) CleanupExpiredLeases(ctx context.Context) error {
+func (m *membership) CleanupExpiredLeases(ctx context.Context) error {
 	var successorPositions = m.ring.getMySuccessorPositions()
 
 	var now = time.Now()
@@ -227,7 +223,7 @@ func (m *Membership) CleanupExpiredLeases(ctx context.Context) error {
 }
 
 // Leave removes all of this node's leases from the ring.
-func (m *Membership) Leave(ctx context.Context) error {
+func (m *membership) Leave(ctx context.Context) error {
 	var positions = m.ring.getMyVNodePositions()
 
 	for _, position := range positions {
