@@ -1,7 +1,6 @@
 package leasering
 
 import (
-	"context"
 	"sync"
 	"time"
 )
@@ -15,7 +14,7 @@ type Ring struct {
 	ringID          string
 	nodeID          string
 	options         options
-	cancel          context.CancelFunc // Cancel function for background workers
+	coordinator     *Coordinator // Handles lifecycle and background workers
 }
 
 // Node represents a member of the ring.

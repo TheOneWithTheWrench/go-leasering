@@ -1,12 +1,16 @@
 package leasering
 
 import (
+	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"regexp"
 	"sort"
 	"strings"
 	"time"
+
+	"go-leasering/database"
 )
 
 var (
@@ -35,6 +39,52 @@ func NewRing(ringID, nodeID string, opts ...Option) *Ring {
 	}
 }
 
+// GetOwnedPartitions returns all partition numbers this node is currently responsible for.
+// Partition numbers range from 0 to ringSize-1 (default 0-1023).
+// This is a hot path function and returns a cached result.
+func (r *Ring) GetOwnedPartitions() []int {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.ownedPartitions
+}
+
+// Start begins the background processes: join, lease renewal, ring refresh, and proposal acceptance.
+// This will block until the node successfully joins the ring.
+func (r *Ring) Start(ctx context.Context, db *sql.DB) error {
+	// Validate ringID before using it in database operations
+	if err := ValidateRingID(r.ringID); err != nil {
+		return fmt.Errorf("invalid ringID: %w", err)
+	}
+
+	// Run migration
+	if err := database.Migrate(db, r.ringID); err != nil {
+		return fmt.Errorf("failed to migrate database: %w", err)
+	}
+
+	// Create components
+	var (
+		queries     = database.NewQueries(db, r.ringID)
+		store       = NewLeaseStore(r.ringID, queries)
+		membership  = NewMembership(r, store, r.nodeID, r.options.leaseTTL, r.options.proposalTTL)
+		coordinator = NewCoordinator(r, membership, store, r.options)
+	)
+
+	// Store coordinator for Stop to use
+	r.coordinator = coordinator
+
+	// Start the coordinator
+	return coordinator.Start(ctx)
+}
+
+// Stop gracefully shuts down and removes this node's leases.
+func (r *Ring) Stop(ctx context.Context, db *sql.DB) error {
+	if r.coordinator == nil {
+		return fmt.Errorf("ring not started")
+	}
+
+	return r.coordinator.Stop(ctx)
+}
+
 // ValidateRingID checks if the ringID is valid for use as a PostgreSQL identifier.
 func ValidateRingID(ringID string) error {
 	if ringID == "" {
@@ -50,15 +100,6 @@ func ValidateRingID(ringID string) error {
 	}
 
 	return nil
-}
-
-// GetOwnedPartitions returns all partition numbers this node is currently responsible for.
-// Partition numbers range from 0 to ringSize-1 (default 0-1023).
-// This is a hot path function and returns a cached result.
-func (r *Ring) GetOwnedPartitions() []int {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	return r.ownedPartitions
 }
 
 // rebuildFromLeases rebuilds the in-memory ring state from a list of leases.
@@ -158,7 +199,7 @@ func (r *Ring) calculateOwnedPartitions() []int {
 			// Wrap around: from last vnode to this one
 			if len(r.vnodes) == 1 {
 				// Only vnode owns entire ring
-				for p := 0; p < ringSize; p++ {
+				for p := range ringSize {
 					partitions = append(partitions, p)
 				}
 				continue
@@ -220,6 +261,50 @@ func (r *Ring) getMyVNodePositions() []int {
 	return positions
 }
 
+// getMyPositions returns a map of all positions owned by this node.
+func (r *Ring) getMyPositions() map[int]bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	var myPositions = make(map[int]bool)
+	for _, vnode := range r.vnodes {
+		if vnode.NodeID == r.nodeID {
+			myPositions[vnode.Position] = true
+		}
+	}
+	return myPositions
+}
+
+// getMySuccessorPositions returns the positions of immediate successors to this node's vnodes.
+func (r *Ring) getMySuccessorPositions() []int {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	var successors = make([]int, 0)
+	for _, vnode := range r.vnodes {
+		if vnode.NodeID != r.nodeID {
+			continue
+		}
+
+		var successorIdx = -1
+		for i := range r.vnodes {
+			if r.vnodes[i].Position > vnode.Position {
+				successorIdx = i
+				break
+			}
+		}
+
+		if successorIdx == -1 && len(r.vnodes) > 0 {
+			successorIdx = 0
+		}
+
+		if successorIdx != -1 && r.vnodes[successorIdx].Position != vnode.Position {
+			successors = append(successors, r.vnodes[successorIdx].Position)
+		}
+	}
+	return successors
+}
+
 // getSuccessorPosition returns the next vnode position after the given position.
 // Returns -1 if ring is empty.
 func (r *Ring) getSuccessorPosition(position int) int {
@@ -253,6 +338,18 @@ func (r *Ring) getVNodeAtPosition(position int) *VNode {
 		}
 	}
 	return nil
+}
+
+// updateMyVNodeExpirations updates the ExpiresAt time for all of this node's vnodes in the local state.
+func (r *Ring) updateMyVNodeExpirations(expiresAt time.Time) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	for i := range r.vnodes {
+		if r.vnodes[i].NodeID == r.nodeID {
+			r.vnodes[i].ExpiresAt = expiresAt
+		}
+	}
 }
 
 // isExpired checks if a vnode's lease has expired.

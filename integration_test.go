@@ -240,9 +240,7 @@ func TestIntegration(t *testing.T) {
 
 		// Now manually expire node-2's leases and stop its workers (simulating a crash)
 		// Don't call Stop() - that would clean up the leases
-		if ring2.cancel != nil {
-			ring2.cancel()
-		}
+		ring2.simulateCrash()
 
 		var queries = database.NewQueries(db, "test_ring")
 		var leases, listErr = queries.ListLeases(ctx, "test_ring")
