@@ -2,7 +2,9 @@ package leasering
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"regexp"
@@ -23,8 +25,9 @@ var (
 
 // NewRing creates a new Ring instance.
 // The ringID must be a valid PostgreSQL identifier (lowercase letters, numbers, underscores, starting with a letter).
+// The node-id is generated automatically using a UUID.
 // Panics if ringID is invalid.
-func NewRing(db *sql.DB, ringID, nodeID string, opts ...Option) *Ring {
+func NewRing(db *sql.DB, ringID string, opts ...Option) *Ring {
 	if err := ValidateRingID(ringID); err != nil {
 		panic(fmt.Sprintf("invalid ringID: %v", err))
 	}
@@ -33,6 +36,9 @@ func NewRing(db *sql.DB, ringID, nodeID string, opts ...Option) *Ring {
 	for _, opt := range opts {
 		opt(&options)
 	}
+
+	// Generate a unique node-id: "node_<last8>"
+	var nodeID = generateNodeID()
 
 	return &Ring{
 		nodes:           make(map[string]*node),
@@ -43,6 +49,24 @@ func NewRing(db *sql.DB, ringID, nodeID string, opts ...Option) *Ring {
 		options:         options,
 		db:              db,
 	}
+}
+
+// generateNodeID creates a unique node identifier using crypto/rand.
+// Format: "node_<8 hex chars>"
+func generateNodeID() string {
+	var b = make([]byte, 4) // 4 bytes = 8 hex chars
+	if _, err := rand.Read(b); err != nil {
+		panic(fmt.Sprintf("failed to generate node ID: %v", err))
+	}
+	return "node_" + hex.EncodeToString(b)
+}
+
+// regenerateNodeID creates a new node ID and updates the ring to use it.
+// This is used when hash collisions are detected during join.
+func (r *Ring) regenerateNodeID() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.nodeID = generateNodeID()
 }
 
 // GetOwnedPartitions returns all partition numbers this node is currently responsible for.
@@ -350,16 +374,17 @@ func (r *Ring) getSuccessorPosition(position int) int {
 }
 
 // getVNodeAtPosition returns the vnode at the given position, if it exists.
-func (r *Ring) getVNodeAtPosition(position int) *vnode {
+// Returns a copy of the vnode to avoid data races when accessing outside the lock.
+func (r *Ring) getVNodeAtPosition(position int) (vnode, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
 	for i := range r.vnodes {
 		if r.vnodes[i].Position == position {
-			return &r.vnodes[i]
+			return r.vnodes[i], true
 		}
 	}
-	return nil
+	return vnode{}, false
 }
 
 // updateMyVNodeExpirations updates the ExpiresAt time for all of this node's vnodes in the local state.

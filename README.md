@@ -21,11 +21,10 @@ A distributed consistent hashing ring implementation with lease-based coordinati
 ```go
 import "go-leasering"
 
-// Create a ring
+// Create a ring (node ID is generated automatically)
 ring := leasering.NewRing(
     db,                  // PostgreSQL connection
     "my_ring",           // Ring ID (must be valid PostgreSQL identifier)
-    "node-1",            // Node ID
     leasering.WithVNodeCount(8),
     leasering.WithLeaseTTL(30*time.Second),
 )
@@ -50,13 +49,13 @@ A demonstration CLI is included to visualize ring behavior:
 
 ```bash
 # Terminal 1
-go run ./cmd/ringnode --node-id node-1
+go run ./cmd/ringnode
 
 # Terminal 2
-go run ./cmd/ringnode --node-id node-2
+go run ./cmd/ringnode
 
 # Terminal 3
-go run ./cmd/ringnode --node-id node-3
+go run ./cmd/ringnode
 ```
 
 See `cmd/ringnode/README.md` for more details.

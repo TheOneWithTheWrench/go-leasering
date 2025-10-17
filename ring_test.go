@@ -1,6 +1,7 @@
 package leasering
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -10,8 +11,8 @@ import (
 
 func TestRing(t *testing.T) {
 	var (
-		newRing = func(nodeID string) *Ring {
-			return NewRing(nil, "test_ring", nodeID)
+		newRing = func() *Ring {
+			return NewRing(nil, "test_ring")
 		}
 		newLease = func(position int, nodeID string, vnodeIdx int) *lease {
 			return &lease{
@@ -25,12 +26,12 @@ func TestRing(t *testing.T) {
 
 	t.Run("should create new ring with correct defaults", func(t *testing.T) {
 		// Arrange & Act
-		var sut = newRing("node-1")
+		var sut = newRing()
 
 		// Assert
 		require.NotNil(t, sut)
 		assert.Equal(t, "test_ring", sut.ringID)
-		assert.Equal(t, "node-1", sut.nodeID)
+		assert.NotEmpty(t, sut.nodeID, "nodeID should be generated")
 		assert.NotNil(t, sut.nodes)
 		assert.NotNil(t, sut.vnodes)
 		assert.NotNil(t, sut.ownedPartitions)
@@ -40,7 +41,7 @@ func TestRing(t *testing.T) {
 
 	t.Run("should return empty partitions for empty ring", func(t *testing.T) {
 		// Arrange
-		var sut = newRing("node-1")
+		var sut = newRing()
 
 		// Act
 		var partitions = sut.GetOwnedPartitions()
@@ -51,13 +52,11 @@ func TestRing(t *testing.T) {
 
 	t.Run("should rebuild from leases with single node", func(t *testing.T) {
 		// Arrange
-		var (
-			sut    = newRing("node-1")
-			leases = []*lease{
-				newLease(100, "node-1", 0),
-				newLease(500, "node-1", 1),
-			}
-		)
+		var sut = newRing()
+		var leases = []*lease{
+			newLease(100, sut.nodeID, 0),
+			newLease(500, sut.nodeID, 1),
+		}
 
 		// Act
 		sut.rebuildFromLeases(leases)
@@ -74,15 +73,13 @@ func TestRing(t *testing.T) {
 
 	t.Run("should rebuild from leases with multiple nodes", func(t *testing.T) {
 		// Arrange
-		var (
-			sut    = newRing("node-1")
-			leases = []*lease{
-				newLease(100, "node-1", 0),
-				newLease(200, "node-2", 0),
-				newLease(500, "node-1", 1),
-				newLease(800, "node-2", 1),
-			}
-		)
+		var sut = newRing()
+		var leases = []*lease{
+			newLease(100, sut.nodeID, 0),
+			newLease(200, "node-2", 0),
+			newLease(500, sut.nodeID, 1),
+			newLease(800, "node-2", 1),
+		}
 
 		// Act
 		sut.rebuildFromLeases(leases)
@@ -94,7 +91,7 @@ func TestRing(t *testing.T) {
 		assert.Equal(t, 500, sut.vnodes[2].Position)
 		assert.Equal(t, 800, sut.vnodes[3].Position)
 
-		// node-1 owns: (800, 100] and (200, 500]
+		// sut.nodeID owns: (800, 100] and (200, 500]
 		var partitions = sut.GetOwnedPartitions()
 		assert.NotEmpty(t, partitions)
 
@@ -105,13 +102,11 @@ func TestRing(t *testing.T) {
 
 	t.Run("should calculate owned partitions correctly for wrap around case", func(t *testing.T) {
 		// Arrange
-		var (
-			sut    = newRing("node-1")
-			leases = []*lease{
-				newLease(50, "node-2", 0),
-				newLease(900, "node-1", 0),
-			}
-		)
+		var sut = newRing()
+		var leases = []*lease{
+			newLease(50, "node-2", 0),
+			newLease(900, sut.nodeID, 0),
+		}
 
 		// Act
 		sut.rebuildFromLeases(leases)
@@ -120,20 +115,18 @@ func TestRing(t *testing.T) {
 		// Assert
 		assert.NotEmpty(t, partitions)
 
-		// node-1 at 900 owns (50, 900]
+		// sut.nodeID at 900 owns (50, 900]
 		var expectedCount = 900 - 50
 		assert.Equal(t, expectedCount, len(partitions))
 	})
 
 	t.Run("should calculate owned partitions for first vnode wrapping to last", func(t *testing.T) {
 		// Arrange
-		var (
-			sut    = newRing("node-1")
-			leases = []*lease{
-				newLease(100, "node-1", 0),
-				newLease(900, "node-2", 0),
-			}
-		)
+		var sut = newRing()
+		var leases = []*lease{
+			newLease(100, sut.nodeID, 0),
+			newLease(900, "node-2", 0),
+		}
 
 		// Act
 		sut.rebuildFromLeases(leases)
@@ -142,7 +135,7 @@ func TestRing(t *testing.T) {
 		// Assert
 		assert.NotEmpty(t, partitions)
 
-		// node-1 at 100 owns (900, 100]
+		// sut.nodeID at 100 owns (900, 100]
 		var expectedCount = (1024 - 900 - 1) + 100 + 1
 		assert.Equal(t, expectedCount, len(partitions))
 	})
@@ -150,7 +143,7 @@ func TestRing(t *testing.T) {
 	t.Run("should find predecessor for position between vnodes", func(t *testing.T) {
 		// Arrange
 		var (
-			sut    = newRing("node-1")
+			sut    = newRing()
 			leases = []*lease{
 				newLease(100, "node-1", 0),
 				newLease(500, "node-2", 0),
@@ -169,7 +162,7 @@ func TestRing(t *testing.T) {
 	t.Run("should find predecessor that wraps around", func(t *testing.T) {
 		// Arrange
 		var (
-			sut    = newRing("node-1")
+			sut    = newRing()
 			leases = []*lease{
 				newLease(100, "node-1", 0),
 				newLease(500, "node-2", 0),
@@ -188,7 +181,7 @@ func TestRing(t *testing.T) {
 	t.Run("should find predecessor of exact vnode position", func(t *testing.T) {
 		// Arrange
 		var (
-			sut    = newRing("node-1")
+			sut    = newRing()
 			leases = []*lease{
 				newLease(100, "node-1", 0),
 				newLease(500, "node-2", 0),
@@ -206,7 +199,7 @@ func TestRing(t *testing.T) {
 
 	t.Run("should return -1 for predecessor in empty ring", func(t *testing.T) {
 		// Arrange
-		var sut = newRing("node-1")
+		var sut = newRing()
 
 		// Act
 		var pred = sut.findPredecessor(500)
@@ -217,7 +210,7 @@ func TestRing(t *testing.T) {
 
 	t.Run("should get my vnode positions", func(t *testing.T) {
 		// Arrange
-		var sut = newRing("node-1")
+		var sut = newRing()
 
 		// Act
 		var positions = sut.getMyVNodePositions()
@@ -238,7 +231,7 @@ func TestRing(t *testing.T) {
 	t.Run("should get successor position between vnodes", func(t *testing.T) {
 		// Arrange
 		var (
-			sut    = newRing("node-1")
+			sut    = newRing()
 			leases = []*lease{
 				newLease(100, "node-1", 0),
 				newLease(500, "node-2", 0),
@@ -257,7 +250,7 @@ func TestRing(t *testing.T) {
 	t.Run("should get successor that wraps around", func(t *testing.T) {
 		// Arrange
 		var (
-			sut    = newRing("node-1")
+			sut    = newRing()
 			leases = []*lease{
 				newLease(100, "node-1", 0),
 				newLease(500, "node-2", 0),
@@ -275,7 +268,7 @@ func TestRing(t *testing.T) {
 
 	t.Run("should return -1 for successor in empty ring", func(t *testing.T) {
 		// Arrange
-		var sut = newRing("node-1")
+		var sut = newRing()
 
 		// Act
 		var succ = sut.getSuccessorPosition(500)
@@ -287,7 +280,7 @@ func TestRing(t *testing.T) {
 	t.Run("should get vnode at position when it exists", func(t *testing.T) {
 		// Arrange
 		var (
-			sut    = newRing("node-1")
+			sut    = newRing()
 			leases = []*lease{
 				newLease(100, "node-1", 0),
 				newLease(500, "node-2", 0),
@@ -296,10 +289,10 @@ func TestRing(t *testing.T) {
 
 		// Act
 		sut.rebuildFromLeases(leases)
-		var vnode = sut.getVNodeAtPosition(100)
+		vnode, found := sut.getVNodeAtPosition(100)
 
 		// Assert
-		require.NotNil(t, vnode)
+		require.True(t, found)
 		assert.Equal(t, "node-1", vnode.NodeID)
 		assert.Equal(t, 100, vnode.Position)
 	})
@@ -307,7 +300,7 @@ func TestRing(t *testing.T) {
 	t.Run("should return nil for vnode at position when it does not exist", func(t *testing.T) {
 		// Arrange
 		var (
-			sut    = newRing("node-1")
+			sut    = newRing()
 			leases = []*lease{
 				newLease(100, "node-1", 0),
 				newLease(500, "node-2", 0),
@@ -316,10 +309,10 @@ func TestRing(t *testing.T) {
 
 		// Act
 		sut.rebuildFromLeases(leases)
-		var vnode = sut.getVNodeAtPosition(999)
+		_, found := sut.getVNodeAtPosition(999)
 
 		// Assert
-		assert.Nil(t, vnode)
+		assert.False(t, found)
 	})
 
 	t.Run("should detect expired vnode", func(t *testing.T) {
@@ -354,15 +347,13 @@ func TestRing(t *testing.T) {
 
 	t.Run("should print visual representation of ring", func(t *testing.T) {
 		// Arrange
-		var (
-			sut    = newRing("node-1")
-			leases = []*lease{
-				newLease(100, "node-1", 0),
-				newLease(300, "node-2", 0),
-				newLease(500, "node-1", 1),
-				newLease(800, "node-3", 0),
-			}
-		)
+		var sut = newRing()
+		var leases = []*lease{
+			newLease(100, sut.nodeID, 0),
+			newLease(300, "node-2", 0),
+			newLease(500, sut.nodeID, 1),
+			newLease(800, "node-3", 0),
+		}
 
 		// Act
 		sut.rebuildFromLeases(leases)
@@ -370,8 +361,8 @@ func TestRing(t *testing.T) {
 
 		// Assert
 		assert.Contains(t, output, "Ring: test_ring")
-		assert.Contains(t, output, "Node: node-1")
-		assert.Contains(t, output, "node-1")
+		assert.Contains(t, output, fmt.Sprintf("Node: %s", sut.nodeID))
+		assert.Contains(t, output, sut.nodeID)
 		assert.Contains(t, output, "node-2")
 		assert.Contains(t, output, "node-3")
 

@@ -2,6 +2,8 @@ package leasering
 
 import (
 	"database/sql"
+	"io"
+	"log/slog"
 	"sync"
 	"time"
 )
@@ -58,6 +60,7 @@ type options struct {
 	renewalInterval time.Duration
 	refreshInterval time.Duration
 	proposalTTL     time.Duration
+	logger          *slog.Logger
 }
 
 // defaultOptions returns sensible defaults.
@@ -72,6 +75,7 @@ func defaultOptions() options {
 		renewalInterval: leaseTTL / 3,
 		refreshInterval: leaseTTL / 2,
 		proposalTTL:     10 * time.Second,
+		logger:          slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 }
 
@@ -91,5 +95,19 @@ func WithLeaseTTL(ttl time.Duration) Option {
 func WithVNodeCount(count int) Option {
 	return func(o *options) {
 		o.vnodeCount = count
+	}
+}
+
+// WithLogger sets the logger for the ring.
+// If the logger is nil, the ring will use a no-op logger.
+// DEFAULT: A no-op logger
+func WithLogger(logger *slog.Logger) Option {
+	return func(o *options) {
+		if logger == nil {
+			o.logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+			return
+		}
+
+		o.logger = logger
 	}
 }

@@ -21,10 +21,10 @@ func TestIntegration(t *testing.T) {
 		newCtx = func() context.Context {
 			return context.Background()
 		}
-		newRing = func(db *sql.DB, ringID, nodeID string) *Ring {
+		newRing = func(db *sql.DB, ringID string) *Ring {
 			// Use fast intervals for testing (1s lease TTL)
 			// This gives us: renewal=333ms, refresh=500ms
-			return NewRing(db, ringID, nodeID, WithLeaseTTL(1*time.Second))
+			return NewRing(db, ringID, WithLeaseTTL(1*time.Second))
 		}
 	)
 
@@ -34,7 +34,7 @@ func TestIntegration(t *testing.T) {
 		var (
 			db   = newDb(t)
 			ctx  = newCtx()
-			ring = newRing(db, "test_ring", "node-1")
+			ring = newRing(db, "test_ring")
 		)
 
 		// Act
@@ -63,8 +63,8 @@ func TestIntegration(t *testing.T) {
 		var (
 			db    = newDb(t)
 			ctx   = newCtx()
-			ring1 = newRing(db, "test_ring", "node-1")
-			ring2 = newRing(db, "test_ring", "node-2")
+			ring1 = newRing(db, "test_ring")
+			ring2 = newRing(db, "test_ring")
 		)
 
 		// Act - node-1 joins first
@@ -116,9 +116,9 @@ func TestIntegration(t *testing.T) {
 		var (
 			db    = newDb(t)
 			ctx   = newCtx()
-			ring1 = newRing(db, "test_ring", "node-1")
-			ring2 = newRing(db, "test_ring", "node-2")
-			ring3 = newRing(db, "test_ring", "node-3")
+			ring1 = newRing(db, "test_ring")
+			ring2 = newRing(db, "test_ring")
+			ring3 = newRing(db, "test_ring")
 		)
 
 		// Act - all nodes join sequentially
@@ -181,7 +181,7 @@ func TestIntegration(t *testing.T) {
 		var (
 			db   = newDb(t)
 			ctx  = newCtx()
-			ring = newRing(db, "test_ring", "node-1")
+			ring = newRing(db, "test_ring")
 		)
 
 		// Act
@@ -221,8 +221,8 @@ func TestIntegration(t *testing.T) {
 		var (
 			db    = newDb(t)
 			ctx   = newCtx()
-			ring1 = newRing(db, "test_ring", "node-1")
-			ring2 = newRing(db, "test_ring", "node-2")
+			ring1 = newRing(db, "test_ring")
+			ring2 = newRing(db, "test_ring")
 		)
 
 		// Both nodes join
@@ -279,8 +279,8 @@ func TestIntegration(t *testing.T) {
 		var (
 			db    = newDb(t)
 			ctx   = newCtx()
-			ring1 = newRing(db, "test_ring", "node-1")
-			ring2 = newRing(db, "test_ring", "node-2")
+			ring1 = newRing(db, "test_ring")
+			ring2 = newRing(db, "test_ring")
 		)
 
 		// Act - both nodes join
@@ -326,7 +326,7 @@ func TestIntegration(t *testing.T) {
 
 		// Act - start 3 nodes
 		for i := range 3 {
-			rings[i] = newRing(db, "test_ring", nodeID(i))
+			rings[i] = newRing(db, "test_ring")
 			err := rings[i].Start(ctx)
 			require.NoError(t, err)
 		}
@@ -371,7 +371,7 @@ func TestIntegration(t *testing.T) {
 		var (
 			db    = newDb(t)
 			ctx   = newCtx()
-			ring1 = newRing(db, "test_ring", "node-1")
+			ring1 = newRing(db, "test_ring")
 		)
 
 		// Start first node
@@ -380,9 +380,9 @@ func TestIntegration(t *testing.T) {
 
 		// Act - start 3 nodes concurrently
 		var (
-			ring2 = newRing(db, "test_ring", "node-2")
-			ring3 = newRing(db, "test_ring", "node-3")
-			ring4 = newRing(db, "test_ring", "node-4")
+			ring2 = newRing(db, "test_ring")
+			ring3 = newRing(db, "test_ring")
+			ring4 = newRing(db, "test_ring")
 		)
 
 		var errCh = make(chan error, 3)
