@@ -273,6 +273,156 @@ func TestIntegration(t *testing.T) {
 		}, 2*time.Second, 100*time.Millisecond, "some expired successor leases should be cleaned up")
 	})
 
+	t.Run("should redistribute partitions after node crash", func(t *testing.T) {
+		t.Parallel()
+		var (
+			db    = newDb(t)
+			ctx   = newCtx()
+			ring1 = newRing(db, "test_ring")
+			ring2 = newRing(db, "test_ring")
+			ring3 = newRing(db, "test_ring")
+		)
+
+		// All three nodes join
+		require.NoError(t, ring1.Start(ctx))
+		defer ring1.Stop(ctx)
+		require.NoError(t, ring2.Start(ctx))
+		require.NoError(t, ring3.Start(ctx))
+		defer ring3.Stop(ctx)
+
+		// Wait for all partitions to be claimed
+		assert.Eventually(t, func() bool {
+			return len(ring1.GetOwnedPartitions()) > 0 &&
+				len(ring2.GetOwnedPartitions()) > 0 &&
+				len(ring3.GetOwnedPartitions()) > 0
+		}, 2*time.Second, 50*time.Millisecond, "all nodes should own partitions")
+
+		// Node-2 crashes without cleanup
+		ring2.simulateCrash()
+
+		// Expire node-2's leases to simulate them timing out
+		var queries = database.NewQueries(db, "test_ring")
+		var leases, _ = queries.ListLeases(ctx, "test_ring")
+		var expiredTime = time.Now().Add(-10 * time.Second)
+		for _, lease := range leases {
+			if lease.NodeID == ring2.nodeID {
+				lease.ExpiresAt = expiredTime
+				queries.SetLease(ctx, lease)
+			}
+		}
+
+		// Wait for ring1 and ring3 to take over all 1024 partitions
+		assert.Eventually(t, func() bool {
+			var allPartitions = make(map[int]bool)
+			for _, p := range ring1.GetOwnedPartitions() {
+				allPartitions[p] = true
+			}
+			for _, p := range ring3.GetOwnedPartitions() {
+				allPartitions[p] = true
+			}
+			return len(allPartitions) == 1024
+		}, 5*time.Second, 100*time.Millisecond, "remaining nodes should cover all partitions after crash")
+	})
+
+	t.Run("should bootstrap into dead ring without stealing from active nodes", func(t *testing.T) {
+		t.Parallel()
+		var (
+			db    = newDb(t)
+			ctx   = newCtx()
+			ring1 = newRing(db, "test_ring")
+			ring2 = newRing(db, "test_ring")
+		)
+
+		// Node-1 joins and bootstraps the ring
+		require.NoError(t, ring1.Start(ctx))
+		assert.Eventually(t, func() bool {
+			return len(ring1.GetOwnedPartitions()) > 0
+		}, 2*time.Second, 50*time.Millisecond, "ring1 should own partitions")
+
+		// Node-1 crashes immediately
+		ring1.simulateCrash()
+
+		// Expire node-1's leases to simulate it being dead
+		var queries = database.NewQueries(db, "test_ring")
+		var leases, _ = queries.ListLeases(ctx, "test_ring")
+		var expiredTime = time.Now().Add(-10 * time.Second)
+		for _, lease := range leases {
+			lease.ExpiresAt = expiredTime
+			queries.SetLease(ctx, lease)
+		}
+
+		// Node-2 joins into the dead ring - should bootstrap and take over
+		require.NoError(t, ring2.Start(ctx))
+		defer ring2.Stop(ctx)
+
+		assert.Eventually(t, func() bool {
+			return len(ring2.GetOwnedPartitions()) == 1024
+		}, 3*time.Second, 100*time.Millisecond, "ring2 should bootstrap and own all partitions")
+	})
+
+	t.Run("should use proposal protocol when active node exists", func(t *testing.T) {
+		t.Parallel()
+		var (
+			db    = newDb(t)
+			ctx   = newCtx()
+			ring1 = newRing(db, "test_ring")
+			ring2 = newRing(db, "test_ring")
+			ring3 = newRing(db, "test_ring")
+		)
+
+		// Node-1 joins and bootstraps
+		require.NoError(t, ring1.Start(ctx))
+		defer ring1.Stop(ctx)
+
+		// Node-1 crashes immediately
+		ring1.simulateCrash()
+
+		// Expire node-1's leases
+		var queries = database.NewQueries(db, "test_ring")
+		var leases, _ = queries.ListLeases(ctx, "test_ring")
+		var expiredTime = time.Now().Add(-10 * time.Second)
+		for _, lease := range leases {
+			lease.ExpiresAt = expiredTime
+			queries.SetLease(ctx, lease)
+		}
+
+		// Node-3 joins first and bootstraps into the dead ring
+		require.NoError(t, ring3.Start(ctx))
+		defer ring3.Stop(ctx)
+		assert.Eventually(t, func() bool {
+			return len(ring3.GetOwnedPartitions()) > 0
+		}, 2*time.Second, 50*time.Millisecond, "ring3 should own partitions")
+
+		// Node-2 tries to join - should use proposal protocol, not bootstrap
+		require.NoError(t, ring2.Start(ctx))
+		defer ring2.Stop(ctx)
+
+		// Both nodes should have partitions (not node-2 stealing everything)
+		assert.Eventually(t, func() bool {
+			return len(ring2.GetOwnedPartitions()) > 0 && len(ring3.GetOwnedPartitions()) > 0
+		}, 3*time.Second, 100*time.Millisecond, "both nodes should share partitions")
+
+		// Verify all partitions are covered with no overlap
+		assert.Eventually(t, func() bool {
+			var allPartitions = make(map[int]int)
+			for _, p := range ring2.GetOwnedPartitions() {
+				allPartitions[p]++
+			}
+			for _, p := range ring3.GetOwnedPartitions() {
+				allPartitions[p]++
+			}
+
+			// Check no overlaps
+			for _, count := range allPartitions {
+				if count > 1 {
+					return false
+				}
+			}
+
+			return len(allPartitions) == 1024
+		}, 3*time.Second, 100*time.Millisecond, "all partitions covered with no overlap")
+	})
+
 	t.Run("should gracefully remove node on Stop", func(t *testing.T) {
 		t.Parallel()
 		// Arrange
