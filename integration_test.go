@@ -20,10 +20,10 @@ func TestIntegration(t *testing.T) {
 		newCtx = func() context.Context {
 			return context.Background()
 		}
-		newRing = func(db *sql.DB, ringID string) *Ring {
+		newRingNode = func(db *sql.DB, ringID string) *Ring {
 			// Use fast intervals for testing (1s lease TTL)
 			// This gives us: renewal=333ms, refresh=500ms, joinTimeout=1.5s
-			return NewRing(db, ringID, WithLeaseTTL(1*time.Second))
+			return NewRingNode(db, ringID, WithLeaseTTL(1*time.Second))
 		}
 	)
 
@@ -33,16 +33,16 @@ func TestIntegration(t *testing.T) {
 		var (
 			db   = newDb(t)
 			ctx  = newCtx()
-			ring = newRing(db, "test_ring")
+			node = newRingNode(db, "test_ring")
 		)
 
 		// Act
-		err := ring.Start(ctx)
+		err := node.Start(ctx)
 
 		// Assert
 		require.NoError(t, err)
 
-		var partitions = ring.GetOwnedPartitions()
+		var partitions = node.GetOwnedPartitions()
 		assert.NotEmpty(t, partitions, "bootstrap node should own all partitions")
 
 		// Verify all leases are in database
@@ -52,7 +52,7 @@ func TestIntegration(t *testing.T) {
 		assert.Len(t, leases, 8, "should have 8 vnodes (default)")
 
 		// Cleanup
-		err = ring.Stop(ctx)
+		err = node.Stop(ctx)
 		require.NoError(t, err)
 	})
 
@@ -62,35 +62,35 @@ func TestIntegration(t *testing.T) {
 		var (
 			db    = newDb(t)
 			ctx   = newCtx()
-			ring1 = newRing(db, "test_ring")
-			ring2 = newRing(db, "test_ring")
+			node1 = newRingNode(db, "test_ring")
+			node2 = newRingNode(db, "test_ring")
 		)
 
 		// Act - node-1 joins first
-		err := ring1.Start(ctx)
+		err := node1.Start(ctx)
 		require.NoError(t, err)
 
-		var partitions1Before = ring1.GetOwnedPartitions()
+		var partitions1Before = node1.GetOwnedPartitions()
 		assert.NotEmpty(t, partitions1Before)
 
 		// Act - node-2 joins second
-		err = ring2.Start(ctx)
+		err = node2.Start(ctx)
 		require.NoError(t, err)
 
 		// Wait for node-2 to own some partitions
 		assert.Eventually(t, func() bool {
-			return len(ring2.GetOwnedPartitions()) > 0
+			return len(node2.GetOwnedPartitions()) > 0
 		}, 2*time.Second, 50*time.Millisecond, "node-2 should own some partitions")
 
 		// Node-1 should have refreshed and lost some partitions
 		assert.Eventually(t, func() bool {
-			return len(ring1.GetOwnedPartitions()) < len(partitions1Before)
+			return len(node1.GetOwnedPartitions()) < len(partitions1Before)
 		}, 2*time.Second, 50*time.Millisecond, "node-1 should own fewer partitions after node-2 joined")
 
 		// Verify no partition overlap
 		var (
-			partitions1After = ring1.GetOwnedPartitions()
-			partitions2      = ring2.GetOwnedPartitions()
+			partitions1After = node1.GetOwnedPartitions()
+			partitions2      = node2.GetOwnedPartitions()
 			partitionSet     = make(map[int]string)
 		)
 		for _, p := range partitions1After {
@@ -103,9 +103,9 @@ func TestIntegration(t *testing.T) {
 		}
 
 		// Cleanup
-		err = ring1.Stop(ctx)
+		err = node1.Stop(ctx)
 		require.NoError(t, err)
-		err = ring2.Stop(ctx)
+		err = node2.Stop(ctx)
 		require.NoError(t, err)
 	})
 
@@ -115,27 +115,27 @@ func TestIntegration(t *testing.T) {
 		var (
 			db    = newDb(t)
 			ctx   = newCtx()
-			ring1 = newRing(db, "test_ring")
-			ring2 = newRing(db, "test_ring")
-			ring3 = newRing(db, "test_ring")
+			node1 = newRingNode(db, "test_ring")
+			node2 = newRingNode(db, "test_ring")
+			node3 = newRingNode(db, "test_ring")
 		)
 
 		// Act - all nodes join sequentially
-		err := ring1.Start(ctx)
+		err := node1.Start(ctx)
 		require.NoError(t, err)
 
-		err = ring2.Start(ctx)
+		err = node2.Start(ctx)
 		require.NoError(t, err)
 
-		err = ring3.Start(ctx)
+		err = node3.Start(ctx)
 		require.NoError(t, err)
 
 		// Wait for all nodes to own partitions and have consistent state (no overlaps)
 		assert.Eventually(t, func() bool {
 			var (
-				partitions1 = ring1.GetOwnedPartitions()
-				partitions2 = ring2.GetOwnedPartitions()
-				partitions3 = ring3.GetOwnedPartitions()
+				partitions1 = node1.GetOwnedPartitions()
+				partitions2 = node2.GetOwnedPartitions()
+				partitions3 = node3.GetOwnedPartitions()
 			)
 
 			if len(partitions1) == 0 || len(partitions2) == 0 || len(partitions3) == 0 {
@@ -167,11 +167,11 @@ func TestIntegration(t *testing.T) {
 		}, 3*time.Second, 100*time.Millisecond, "all nodes should own partitions with no overlaps")
 
 		// Cleanup
-		err = ring1.Stop(ctx)
+		err = node1.Stop(ctx)
 		require.NoError(t, err)
-		err = ring2.Stop(ctx)
+		err = node2.Stop(ctx)
 		require.NoError(t, err)
-		err = ring3.Stop(ctx)
+		err = node3.Stop(ctx)
 		require.NoError(t, err)
 	})
 
@@ -181,13 +181,13 @@ func TestIntegration(t *testing.T) {
 		var (
 			db   = newDb(t)
 			ctx  = newCtx()
-			ring = newRing(db, "test_ring")
+			node = newRingNode(db, "test_ring")
 		)
 
 		// Act
-		err := ring.Start(ctx)
+		err := node.Start(ctx)
 		require.NoError(t, err)
-		defer ring.Stop(ctx)
+		defer node.Stop(ctx)
 
 		// Get initial lease expiration times
 		var queries = database.NewQueries(db, "test_ring")
@@ -221,26 +221,26 @@ func TestIntegration(t *testing.T) {
 		var (
 			db    = newDb(t)
 			ctx   = newCtx()
-			ring1 = newRing(db, "test_ring")
-			ring2 = newRing(db, "test_ring")
+			node1 = newRingNode(db, "test_ring")
+			node2 = newRingNode(db, "test_ring")
 		)
 
 		// Both nodes join
-		err := ring1.Start(ctx)
+		err := node1.Start(ctx)
 		require.NoError(t, err)
-		defer ring1.Stop(ctx)
+		defer node1.Stop(ctx)
 
-		err = ring2.Start(ctx)
+		err = node2.Start(ctx)
 		require.NoError(t, err)
 
 		// Wait for both nodes to have partitions
 		assert.Eventually(t, func() bool {
-			return len(ring1.GetOwnedPartitions()) > 0 && len(ring2.GetOwnedPartitions()) > 0
+			return len(node1.GetOwnedPartitions()) > 0 && len(node2.GetOwnedPartitions()) > 0
 		}, 2*time.Second, 50*time.Millisecond, "both nodes should own partitions")
 
 		// Now manually expire node-2's leases and stop its workers (simulating a crash)
 		// Don't call Stop() - that would clean up the leases
-		ring2.simulateCrash()
+		node2.simulateCrash()
 
 		var queries = database.NewQueries(db, "test_ring")
 		var leases, listErr = queries.ListLeases(ctx, "test_ring")
@@ -249,7 +249,7 @@ func TestIntegration(t *testing.T) {
 		// Expire node-2's leases
 		var expiredTime = time.Now().Add(-10 * time.Second)
 		for _, lease := range leases {
-			if lease.NodeID == "node-2" {
+			if lease.NodeID == node2.nodeID {
 				lease.ExpiresAt = expiredTime
 				err = queries.SetLease(ctx, lease)
 				require.NoError(t, err)
@@ -264,7 +264,7 @@ func TestIntegration(t *testing.T) {
 			}
 			node2Count := 0
 			for _, lease := range finalLeases {
-				if lease.NodeID == "node-2" {
+				if lease.NodeID == node2.nodeID {
 					node2Count++
 				}
 			}
@@ -278,34 +278,34 @@ func TestIntegration(t *testing.T) {
 		var (
 			db    = newDb(t)
 			ctx   = newCtx()
-			ring1 = newRing(db, "test_ring")
-			ring2 = newRing(db, "test_ring")
-			ring3 = newRing(db, "test_ring")
+			node1 = newRingNode(db, "test_ring")
+			node2 = newRingNode(db, "test_ring")
+			node3 = newRingNode(db, "test_ring")
 		)
 
 		// All three nodes join
-		require.NoError(t, ring1.Start(ctx))
-		defer ring1.Stop(ctx)
-		require.NoError(t, ring2.Start(ctx))
-		require.NoError(t, ring3.Start(ctx))
-		defer ring3.Stop(ctx)
+		require.NoError(t, node1.Start(ctx))
+		defer node1.Stop(ctx)
+		require.NoError(t, node2.Start(ctx))
+		require.NoError(t, node3.Start(ctx))
+		defer node3.Stop(ctx)
 
 		// Wait for all partitions to be claimed
 		assert.Eventually(t, func() bool {
-			return len(ring1.GetOwnedPartitions()) > 0 &&
-				len(ring2.GetOwnedPartitions()) > 0 &&
-				len(ring3.GetOwnedPartitions()) > 0
+			return len(node1.GetOwnedPartitions()) > 0 &&
+				len(node2.GetOwnedPartitions()) > 0 &&
+				len(node3.GetOwnedPartitions()) > 0
 		}, 2*time.Second, 50*time.Millisecond, "all nodes should own partitions")
 
 		// Node-2 crashes without cleanup
-		ring2.simulateCrash()
+		node2.simulateCrash()
 
 		// Expire node-2's leases to simulate them timing out
 		var queries = database.NewQueries(db, "test_ring")
 		var leases, _ = queries.ListLeases(ctx, "test_ring")
 		var expiredTime = time.Now().Add(-10 * time.Second)
 		for _, lease := range leases {
-			if lease.NodeID == ring2.nodeID {
+			if lease.NodeID == node2.nodeID {
 				lease.ExpiresAt = expiredTime
 				queries.SetLease(ctx, lease)
 			}
@@ -314,10 +314,10 @@ func TestIntegration(t *testing.T) {
 		// Wait for ring1 and ring3 to take over all 1024 partitions
 		assert.Eventually(t, func() bool {
 			var allPartitions = make(map[int]bool)
-			for _, p := range ring1.GetOwnedPartitions() {
+			for _, p := range node1.GetOwnedPartitions() {
 				allPartitions[p] = true
 			}
-			for _, p := range ring3.GetOwnedPartitions() {
+			for _, p := range node3.GetOwnedPartitions() {
 				allPartitions[p] = true
 			}
 			return len(allPartitions) == 1024
@@ -329,18 +329,18 @@ func TestIntegration(t *testing.T) {
 		var (
 			db    = newDb(t)
 			ctx   = newCtx()
-			ring1 = newRing(db, "test_ring")
-			ring2 = newRing(db, "test_ring")
+			node1 = newRingNode(db, "test_ring")
+			node2 = newRingNode(db, "test_ring")
 		)
 
 		// Node-1 joins and bootstraps the ring
-		require.NoError(t, ring1.Start(ctx))
+		require.NoError(t, node1.Start(ctx))
 		assert.Eventually(t, func() bool {
-			return len(ring1.GetOwnedPartitions()) > 0
-		}, 2*time.Second, 50*time.Millisecond, "ring1 should own partitions")
+			return len(node1.GetOwnedPartitions()) > 0
+		}, 2*time.Second, 50*time.Millisecond, "node1 should own partitions")
 
 		// Node-1 crashes immediately
-		ring1.simulateCrash()
+		node1.simulateCrash()
 
 		// Expire node-1's leases to simulate it being dead
 		var queries = database.NewQueries(db, "test_ring")
@@ -352,12 +352,12 @@ func TestIntegration(t *testing.T) {
 		}
 
 		// Node-2 joins into the dead ring - should bootstrap and take over
-		require.NoError(t, ring2.Start(ctx))
-		defer ring2.Stop(ctx)
+		require.NoError(t, node2.Start(ctx))
+		defer node2.Stop(ctx)
 
 		assert.Eventually(t, func() bool {
-			return len(ring2.GetOwnedPartitions()) == 1024
-		}, 3*time.Second, 100*time.Millisecond, "ring2 should bootstrap and own all partitions")
+			return len(node2.GetOwnedPartitions()) == 1024
+		}, 3*time.Second, 100*time.Millisecond, "node2 should bootstrap and own all partitions")
 	})
 
 	t.Run("should use proposal protocol when active node exists", func(t *testing.T) {
@@ -365,17 +365,17 @@ func TestIntegration(t *testing.T) {
 		var (
 			db    = newDb(t)
 			ctx   = newCtx()
-			ring1 = newRing(db, "test_ring")
-			ring2 = newRing(db, "test_ring")
-			ring3 = newRing(db, "test_ring")
+			node1 = newRingNode(db, "test_ring")
+			node2 = newRingNode(db, "test_ring")
+			node3 = newRingNode(db, "test_ring")
 		)
 
 		// Node-1 joins and bootstraps
-		require.NoError(t, ring1.Start(ctx))
-		defer ring1.Stop(ctx)
+		require.NoError(t, node1.Start(ctx))
+		defer node1.Stop(ctx)
 
 		// Node-1 crashes immediately
-		ring1.simulateCrash()
+		node1.simulateCrash()
 
 		// Expire node-1's leases
 		var queries = database.NewQueries(db, "test_ring")
@@ -387,28 +387,28 @@ func TestIntegration(t *testing.T) {
 		}
 
 		// Node-3 joins first and bootstraps into the dead ring
-		require.NoError(t, ring3.Start(ctx))
-		defer ring3.Stop(ctx)
+		require.NoError(t, node3.Start(ctx))
+		defer node3.Stop(ctx)
 		assert.Eventually(t, func() bool {
-			return len(ring3.GetOwnedPartitions()) > 0
-		}, 2*time.Second, 50*time.Millisecond, "ring3 should own partitions")
+			return len(node3.GetOwnedPartitions()) > 0
+		}, 2*time.Second, 50*time.Millisecond, "node3 should own partitions")
 
 		// Node-2 tries to join - should use proposal protocol, not bootstrap
-		require.NoError(t, ring2.Start(ctx))
-		defer ring2.Stop(ctx)
+		require.NoError(t, node2.Start(ctx))
+		defer node2.Stop(ctx)
 
 		// Both nodes should have partitions (not node-2 stealing everything)
 		assert.Eventually(t, func() bool {
-			return len(ring2.GetOwnedPartitions()) > 0 && len(ring3.GetOwnedPartitions()) > 0
+			return len(node2.GetOwnedPartitions()) > 0 && len(node3.GetOwnedPartitions()) > 0
 		}, 3*time.Second, 100*time.Millisecond, "both nodes should share partitions")
 
 		// Verify all partitions are covered with no overlap
 		assert.Eventually(t, func() bool {
 			var allPartitions = make(map[int]int)
-			for _, p := range ring2.GetOwnedPartitions() {
+			for _, p := range node2.GetOwnedPartitions() {
 				allPartitions[p]++
 			}
-			for _, p := range ring3.GetOwnedPartitions() {
+			for _, p := range node3.GetOwnedPartitions() {
 				allPartitions[p]++
 			}
 
@@ -429,24 +429,24 @@ func TestIntegration(t *testing.T) {
 		var (
 			db    = newDb(t)
 			ctx   = newCtx()
-			ring1 = newRing(db, "test_ring")
-			ring2 = newRing(db, "test_ring")
+			node1 = newRingNode(db, "test_ring")
+			node2 = newRingNode(db, "test_ring")
 		)
 
 		// Act - both nodes join
-		err := ring1.Start(ctx)
+		err := node1.Start(ctx)
 		require.NoError(t, err)
 
-		err = ring2.Start(ctx)
+		err = node2.Start(ctx)
 		require.NoError(t, err)
 
 		// Wait for both nodes to own partitions
 		assert.Eventually(t, func() bool {
-			return len(ring1.GetOwnedPartitions()) > 0 && len(ring2.GetOwnedPartitions()) > 0
+			return len(node1.GetOwnedPartitions()) > 0 && len(node2.GetOwnedPartitions()) > 0
 		}, 2*time.Second, 50*time.Millisecond, "both nodes should own partitions")
 
 		// Node-2 gracefully stops
-		err = ring2.Stop(ctx)
+		err = node2.Stop(ctx)
 		require.NoError(t, err)
 
 		// Verify node-2's leases are removed immediately
@@ -455,12 +455,12 @@ func TestIntegration(t *testing.T) {
 		require.NoError(t, listErr)
 
 		for _, lease := range leases {
-			assert.NotEqual(t, "node-2", lease.NodeID,
-				"node-2 should have no leases after Stop")
+			assert.NotEqual(t, node2.nodeID, lease.NodeID,
+				"node2 should have no leases after Stop")
 		}
 
 		// Cleanup
-		err = ring1.Stop(ctx)
+		err = node1.Stop(ctx)
 		require.NoError(t, err)
 	})
 
@@ -468,22 +468,22 @@ func TestIntegration(t *testing.T) {
 		t.Parallel()
 		// Arrange
 		var (
-			db    = newDb(t)
-			ctx   = newCtx()
-			rings = make([]*Ring, 3) // Use 3 nodes instead of 5 for speed
+			db     = newDb(t)
+			ctx    = newCtx()
+			nodes2 = make([]*Ring, 3) // Use 3 nodes instead of 5 for speed
 		)
 
 		// Act - start 3 nodes
 		for i := range 3 {
-			rings[i] = newRing(db, "test_ring")
-			err := rings[i].Start(ctx)
+			nodes2[i] = newRingNode(db, "test_ring")
+			err := nodes2[i].Start(ctx)
 			require.NoError(t, err)
 		}
 
 		// Wait for all nodes to own partitions
 		assert.Eventually(t, func() bool {
 			for i := range 3 {
-				if len(rings[i].GetOwnedPartitions()) == 0 {
+				if len(nodes2[i].GetOwnedPartitions()) == 0 {
 					return false
 				}
 			}
@@ -494,7 +494,7 @@ func TestIntegration(t *testing.T) {
 		assert.Eventually(t, func() bool {
 			var allPartitions = make(map[int]int) // partition -> count
 			for i := range 3 {
-				var partitions = rings[i].GetOwnedPartitions()
+				var partitions = nodes2[i].GetOwnedPartitions()
 				for _, p := range partitions {
 					allPartitions[p]++
 				}
@@ -513,7 +513,7 @@ func TestIntegration(t *testing.T) {
 
 		// Cleanup
 		for i := range 3 {
-			err := rings[i].Stop(ctx)
+			err := nodes2[i].Stop(ctx)
 			require.NoError(t, err)
 		}
 	})
@@ -524,24 +524,24 @@ func TestIntegration(t *testing.T) {
 		var (
 			db    = newDb(t)
 			ctx   = newCtx()
-			ring1 = newRing(db, "test_ring")
+			node1 = newRingNode(db, "test_ring")
 		)
 
 		// Start first node
-		err := ring1.Start(ctx)
+		err := node1.Start(ctx)
 		require.NoError(t, err)
 
 		// Act - start 3 nodes concurrently
 		var (
-			ring2 = newRing(db, "test_ring")
-			ring3 = newRing(db, "test_ring")
-			ring4 = newRing(db, "test_ring")
+			node2 = newRingNode(db, "test_ring")
+			node3 = newRingNode(db, "test_ring")
+			node4 = newRingNode(db, "test_ring")
 		)
 
 		var errCh = make(chan error, 3)
-		go func() { errCh <- ring2.Start(ctx) }()
-		go func() { errCh <- ring3.Start(ctx) }()
-		go func() { errCh <- ring4.Start(ctx) }()
+		go func() { errCh <- node2.Start(ctx) }()
+		go func() { errCh <- node3.Start(ctx) }()
+		go func() { errCh <- node4.Start(ctx) }()
 
 		// Verify all joined successfully
 		for range 3 {
@@ -551,20 +551,20 @@ func TestIntegration(t *testing.T) {
 
 		// Wait for all nodes to own partitions
 		assert.Eventually(t, func() bool {
-			return len(ring1.GetOwnedPartitions()) > 0 &&
-				len(ring2.GetOwnedPartitions()) > 0 &&
-				len(ring3.GetOwnedPartitions()) > 0 &&
-				len(ring4.GetOwnedPartitions()) > 0
+			return len(node1.GetOwnedPartitions()) > 0 &&
+				len(node2.GetOwnedPartitions()) > 0 &&
+				len(node3.GetOwnedPartitions()) > 0 &&
+				len(node4.GetOwnedPartitions()) > 0
 		}, 2*time.Second, 50*time.Millisecond, "all nodes should own some partitions")
 
 		// Cleanup
-		err = ring1.Stop(ctx)
+		err = node1.Stop(ctx)
 		require.NoError(t, err)
-		err = ring2.Stop(ctx)
+		err = node2.Stop(ctx)
 		require.NoError(t, err)
-		err = ring3.Stop(ctx)
+		err = node3.Stop(ctx)
 		require.NoError(t, err)
-		err = ring4.Stop(ctx)
+		err = node4.Stop(ctx)
 		require.NoError(t, err)
 	})
 }

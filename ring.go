@@ -23,11 +23,11 @@ var (
 	validRingIDPattern = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
 )
 
-// NewRing creates a new Ring instance.
+// NewRingNode creates a new node that will join the specified ring.
 // The ringID must be a valid PostgreSQL identifier (lowercase letters, numbers, underscores, starting with a letter).
 // The node-id is generated automatically using a UUID.
 // Panics if ringID is invalid.
-func NewRing(db *sql.DB, ringID string, opts ...Option) *Ring {
+func NewRingNode(db *sql.DB, ringID string, opts ...Option) *Ring {
 	if err := ValidateRingID(ringID); err != nil {
 		panic(fmt.Sprintf("invalid ringID: %v", err))
 	}

@@ -61,10 +61,10 @@ func runNode(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to ping database: %w", err)
 	}
 
-	// Create ring with options
+	// Create ring node
 	// Logs go to stderr so they don't get cleared by status updates
 	fmt.Printf("Creating ring node\n")
-	var ring = leasering.NewRing(
+	var ring = leasering.NewRingNode(
 		db,
 		ringID,
 		leasering.WithVNodeCount(vnodeCount),

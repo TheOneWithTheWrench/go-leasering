@@ -12,7 +12,7 @@ import (
 func TestRing(t *testing.T) {
 	var (
 		newRing = func() *Ring {
-			return NewRing(nil, "test_ring")
+			return NewRingNode(nil, "test_ring")
 		}
 		newLease = func(position int, nodeID string, vnodeIdx int) *lease {
 			return &lease{
