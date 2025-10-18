@@ -23,11 +23,11 @@ var (
 	validRingIDPattern = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
 )
 
-// NewRing creates a new Ring instance.
+// NewRingNode creates a new node that will join the specified ring.
 // The ringID must be a valid PostgreSQL identifier (lowercase letters, numbers, underscores, starting with a letter).
 // The node-id is generated automatically using a UUID.
 // Panics if ringID is invalid.
-func NewRing(db *sql.DB, ringID string, opts ...Option) *Ring {
+func NewRingNode(db *sql.DB, ringID string, opts ...Option) *Ring {
 	if err := ValidateRingID(ringID); err != nil {
 		panic(fmt.Sprintf("invalid ringID: %v", err))
 	}
@@ -49,24 +49,6 @@ func NewRing(db *sql.DB, ringID string, opts ...Option) *Ring {
 		options:         options,
 		db:              db,
 	}
-}
-
-// generateNodeID creates a unique node identifier using crypto/rand.
-// Format: "node_<8 hex chars>"
-func generateNodeID() string {
-	var b = make([]byte, 4) // 4 bytes = 8 hex chars
-	if _, err := rand.Read(b); err != nil {
-		panic(fmt.Sprintf("failed to generate node ID: %v", err))
-	}
-	return "node_" + hex.EncodeToString(b)
-}
-
-// regenerateNodeID creates a new node ID and updates the ring to use it.
-// This is used when hash collisions are detected during join.
-func (r *Ring) regenerateNodeID() {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.nodeID = generateNodeID()
 }
 
 // GetOwnedPartitions returns all partition numbers this node is currently responsible for.
@@ -128,6 +110,14 @@ func ValidateRingID(ringID string) error {
 	}
 
 	return nil
+}
+
+// regenerateNodeID creates a new node ID and updates the ring to use it.
+// This is used when hash collisions are detected during join.
+func (r *Ring) regenerateNodeID() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.nodeID = generateNodeID()
 }
 
 // rebuildFromLeases rebuilds the in-memory ring state from a list of leases.
@@ -307,6 +297,19 @@ func (r *Ring) getMyVNodePositions() []int {
 	return positions
 }
 
+// hasSelfCollision checks if any of this node's vnodes hash to the same position.
+func (r *Ring) hasSelfCollision() bool {
+	var positions = r.getMyVNodePositions()
+	var seen = make(map[int]bool, len(positions))
+	for _, pos := range positions {
+		if seen[pos] {
+			return true
+		}
+		seen[pos] = true
+	}
+	return false
+}
+
 // getMyPositions returns a map of all positions owned by this node.
 func (r *Ring) getMyPositions() map[int]bool {
 	r.mu.RLock()
@@ -473,4 +476,14 @@ func (r *Ring) String() string {
 	}
 
 	return b.String()
+}
+
+// generateNodeID creates a unique node identifier using crypto/rand.
+// Format: "node_<8 hex chars>"
+func generateNodeID() string {
+	var b = make([]byte, 4) // 4 bytes = 8 hex chars
+	if _, err := rand.Read(b); err != nil {
+		panic(fmt.Sprintf("failed to generate node ID: %v", err))
+	}
+	return "node_" + hex.EncodeToString(b)
 }

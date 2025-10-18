@@ -21,8 +21,8 @@ A distributed consistent hashing ring implementation with lease-based coordinati
 ```go
 import "go-leasering"
 
-// Create a ring (node ID is generated automatically)
-ring := leasering.NewRing(
+// Create a ring node (node ID is generated automatically)
+ring := leasering.NewRingNode(
     db,                  // PostgreSQL connection
     "my_ring",           // Ring ID (must be valid PostgreSQL identifier)
     leasering.WithVNodeCount(8),

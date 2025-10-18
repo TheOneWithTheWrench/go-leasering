@@ -108,53 +108,68 @@ func (m *membership) AcceptProposals(ctx context.Context) error {
 			continue
 		}
 
-		for _, proposal := range proposals {
-			if now.After(proposal.ExpiresAt) {
-				if err := m.store.DeleteProposal(ctx, proposal.PredecessorPos,
-					proposal.NewNodeID, proposal.NewVNodeIdx); err != nil {
-					return fmt.Errorf("failed to delete expired proposal: %w", err)
+		var proposalsByPos = make(map[int][]*proposal)
+		for _, p := range proposals {
+			proposalsByPos[p.ProposedPos] = append(proposalsByPos[p.ProposedPos], p)
+		}
+
+		for _, posProposals := range proposalsByPos {
+			var validProposals []*proposal
+			for _, p := range posProposals {
+				if now.After(p.ExpiresAt) {
+					if err := m.store.DeleteProposal(ctx, p.PredecessorPos, p.NewNodeID, p.NewVNodeIdx); err != nil {
+						return fmt.Errorf("failed to delete expired proposal: %w", err)
+					}
+					continue
 				}
+				validProposals = append(validProposals, p)
+			}
+
+			if len(validProposals) == 0 {
 				continue
 			}
 
-			var existingLease, getErr = m.store.GetLease(ctx, proposal.ProposedPos)
-			if getErr != nil {
-				return fmt.Errorf("failed to check existing lease: %w", getErr)
-			}
-
-			if existingLease != nil {
-				if err := m.store.DeleteProposal(ctx, proposal.PredecessorPos,
-					proposal.NewNodeID, proposal.NewVNodeIdx); err != nil {
-					return fmt.Errorf("failed to delete rejected proposal: %w", err)
+			// Pick winner lexicographically by node_id for deterministic collision resolution
+			var winner *proposal
+			for _, p := range validProposals {
+				if winner == nil || p.NewNodeID < winner.NewNodeID {
+					winner = p
 				}
-				continue
 			}
 
 			var (
 				leaseTTL = now.Add(m.leaseTTL)
 				lease    = &lease{
-					Position:  proposal.ProposedPos,
-					NodeID:    proposal.NewNodeID,
-					VNodeIdx:  proposal.NewVNodeIdx,
+					Position:  winner.ProposedPos,
+					NodeID:    winner.NewNodeID,
+					VNodeIdx:  winner.NewVNodeIdx,
 					ExpiresAt: leaseTTL,
 				}
 			)
 
-			if err := m.store.SetLease(ctx, lease); err != nil {
-				return fmt.Errorf("failed to accept proposal: %w", err)
-			}
-
-			if err := m.store.DeleteProposal(ctx, proposal.PredecessorPos,
-				proposal.NewNodeID, proposal.NewVNodeIdx); err != nil {
-				return fmt.Errorf("failed to delete accepted proposal: %w", err)
+			// InsertLease will fail if position already has a lease (atomic operation)
+			insertErr := m.store.InsertLease(ctx, lease)
+			if insertErr != nil {
+				for _, p := range validProposals {
+					if err := m.store.DeleteProposal(ctx, p.PredecessorPos, p.NewNodeID, p.NewVNodeIdx); err != nil {
+						return fmt.Errorf("failed to delete rejected proposal: %w", err)
+					}
+				}
+				continue
 			}
 
 			m.ring.addVNode(vnode{
-				NodeID:    proposal.NewNodeID,
-				Index:     proposal.NewVNodeIdx,
-				Position:  proposal.ProposedPos,
+				NodeID:    winner.NewNodeID,
+				Index:     winner.NewVNodeIdx,
+				Position:  winner.ProposedPos,
 				ExpiresAt: leaseTTL,
 			})
+
+			for _, p := range validProposals {
+				if err := m.store.DeleteProposal(ctx, p.PredecessorPos, p.NewNodeID, p.NewVNodeIdx); err != nil {
+					return fmt.Errorf("failed to delete processed proposal: %w", err)
+				}
+			}
 		}
 	}
 
@@ -229,6 +244,35 @@ func (m *membership) Leave(ctx context.Context) error {
 	for _, position := range positions {
 		if err := m.store.DeleteLease(ctx, position); err != nil {
 			return fmt.Errorf("failed to delete lease at position %d: %w", position, err)
+		}
+	}
+
+	return nil
+}
+
+// CleanupNodeData removes all leases and proposals for the current node-id.
+// This is used when retrying join with a new node-id after a partial join failure.
+func (m *membership) CleanupNodeData(ctx context.Context) error {
+	var positions = m.ring.getMyVNodePositions()
+
+	if err := m.RefreshRingState(ctx); err != nil {
+		return fmt.Errorf("failed to refresh ring state: %w", err)
+	}
+
+	for i, position := range positions {
+		lease, err := m.store.GetLease(ctx, position)
+		if err != nil {
+			return fmt.Errorf("failed to get lease at position %d: %w", position, err)
+		}
+		if lease != nil && lease.NodeID == m.nodeID {
+			if err := m.store.DeleteLease(ctx, position); err != nil {
+				return fmt.Errorf("failed to delete lease at position %d: %w", position, err)
+			}
+		}
+
+		predecessorPos := m.ring.findPredecessor(position)
+		if predecessorPos != -1 {
+			_ = m.store.DeleteProposal(ctx, predecessorPos, m.nodeID, i)
 		}
 	}
 
