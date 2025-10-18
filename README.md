@@ -81,6 +81,31 @@ See `cmd/ringnode/README.md` for more details.
 - PostgreSQL 12+
 - Go 1.24+
 
+## Troubleshooting
+
+### "relation does not exist" or search_path errors
+
+If you encounter errors like `relation "demo_ring_leases" does not exist` or search_path related issues, your PostgreSQL connection may not be configured to look in the correct schema.
+
+**Solutions:**
+
+1. **Add search_path to connection string** (recommended):
+   ```
+   postgres://user:pass@localhost:5432/db?sslmode=disable&search_path=public
+   ```
+
+2. **Set search_path at database level**:
+   ```sql
+   ALTER DATABASE yourdb SET search_path TO public;
+   ```
+
+3. **Set search_path for your user**:
+   ```sql
+   ALTER ROLE youruser SET search_path TO public;
+   ```
+
+The library creates tables in the schema determined by your PostgreSQL connection's `search_path` setting (typically `public` by default).
+
 ## Future Work
 
 This library needs significant work before production readiness:

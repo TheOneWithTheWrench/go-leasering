@@ -6,6 +6,7 @@ services:
       POSTGRES_USER: testuser
       POSTGRES_PASSWORD: testpassword
       POSTGRES_DB: leasering_test_db
+    command: postgres -c search_path=public
     ports:
       - "5432:5432"
     healthcheck:

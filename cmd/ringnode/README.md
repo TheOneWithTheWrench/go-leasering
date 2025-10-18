@@ -4,71 +4,84 @@ A command-line demonstration of the go-lease-ring library. Run multiple instance
 
 ## Prerequisites
 
-- PostgreSQL running locally (default: `localhost:5432`)
-- Database accessible with connection string
+- Docker and Docker Compose (for test database)
+- Go 1.24+
 
 ## Quick Start
 
-### Terminal 1 - Start first node:
+### Step 1 - Start the test database:
 ```bash
-go run ./cmd/ringnode --node-id node-1
+make db-up
 ```
 
-### Terminal 2 - Start second node:
+This starts a PostgreSQL container configured for the demo. Wait for it to be ready.
+
+### Step 2 - Start multiple nodes in separate terminals:
+
+**Terminal 1:**
 ```bash
-go run ./cmd/ringnode --node-id node-2
+go run ./cmd/ringnode
 ```
 
-### Terminal 3 - Start third node:
+**Terminal 2:**
 ```bash
-go run ./cmd/ringnode --node-id node-3
+go run ./cmd/ringnode
+```
+
+**Terminal 3:**
+```bash
+go run ./cmd/ringnode
 ```
 
 Watch as the nodes automatically:
-- Join the ring
+- Join the ring (node IDs are auto-generated)
 - Distribute partitions evenly
 - Maintain leases
 
 Press `Ctrl+C` in any terminal to gracefully remove that node from the ring.
 
+### Step 3 - Stop the database when done:
+```bash
+make db-down
+```
+
 ## Flags
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--node-id` | (required) | Unique identifier for this node |
 | `--ring-id` | `demo_ring` | Ring identifier (all nodes must use same ring-id). Must contain only lowercase letters, numbers, and underscores, starting with a letter. |
 | `--vnodes` | `8` | Number of virtual nodes per physical node |
-| `--ring-size` | `1024` | Total number of partitions in the ring |
-| `--lease-ttl` | `30s` | How long leases last before expiring |
+| `--lease-ttl` | `10s` | How long leases last before expiring |
 | `--db` | `postgres://testuser:testpassword@localhost:5432/leasering_test_db?sslmode=disable` | PostgreSQL connection URL |
 | `--crash` | `false` | Crash mode: exit immediately on Ctrl+C without cleanup |
+
+**Note:** Node IDs are automatically generated (e.g., `node_abc123`). You don't need to specify them.
 
 ## Examples
 
 ### Custom database connection:
 ```bash
-go run ./cmd/ringnode --node-id node-1 \
-  --db "postgres://user:pass@localhost:5432/mydb?sslmode=disable"
+go run ./cmd/ringnode --db "postgres://user:pass@localhost:5432/mydb?sslmode=disable"
 ```
 
 ### Fast-expiring leases for testing:
 ```bash
-go run ./cmd/ringnode --node-id node-1 --lease-ttl 5s
+go run ./cmd/ringnode --lease-ttl 5s
 ```
 
 ### More virtual nodes for better distribution:
 ```bash
-go run ./cmd/ringnode --node-id node-1 --vnodes 16
+go run ./cmd/ringnode --vnodes 16
 ```
 
 ### Different ring:
 ```bash
-go run ./cmd/ringnode --node-id node-1 --ring-id production-ring
+go run ./cmd/ringnode --ring-id production_ring
 ```
 
 ### Crash mode (simulate node failure):
 ```bash
-go run ./cmd/ringnode --node-id node-1 --crash
+go run ./cmd/ringnode --crash
 ```
 This will exit immediately on Ctrl+C without cleaning up leases, simulating a node crash. Other nodes will detect the expired leases and clean them up.
 
