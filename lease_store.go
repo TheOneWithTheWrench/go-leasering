@@ -61,7 +61,7 @@ func (ls *leaseStore) GetLease(ctx context.Context, position int) (*lease, error
 	}, nil
 }
 
-// SetLease writes a lease to the database.
+// SetLease writes a lease to the database (upsert - will overwrite existing lease).
 func (ls *leaseStore) SetLease(ctx context.Context, lease *lease) error {
 	var record = &database.LeaseRecord{
 		RingID:    ls.ringID,
@@ -73,6 +73,23 @@ func (ls *leaseStore) SetLease(ctx context.Context, lease *lease) error {
 
 	if err := ls.queries.SetLease(ctx, record); err != nil {
 		return fmt.Errorf("failed to set lease at position %d: %w", lease.Position, err)
+	}
+
+	return nil
+}
+
+// InsertLease inserts a new lease. Returns error if position already has a lease.
+func (ls *leaseStore) InsertLease(ctx context.Context, lease *lease) error {
+	var record = &database.LeaseRecord{
+		RingID:    ls.ringID,
+		Position:  lease.Position,
+		NodeID:    lease.NodeID,
+		VNodeIdx:  lease.VNodeIdx,
+		ExpiresAt: lease.ExpiresAt,
+	}
+
+	if err := ls.queries.InsertLease(ctx, record); err != nil {
+		return fmt.Errorf("failed to insert lease at position %d: %w", lease.Position, err)
 	}
 
 	return nil

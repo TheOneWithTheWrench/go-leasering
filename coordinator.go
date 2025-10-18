@@ -32,41 +32,63 @@ func newCoordinator(ring *Ring, m *membership, store *leaseStore, opts options) 
 // with a separate context.Background() to ensure they continue running independently of the
 // caller's context. The workers are stopped via the internal cancel function when stop() is called.
 func (c *coordinator) start(ctx context.Context) error {
-	const maxRetries = 5
+	const maxRetries = 10
 
-	// Retry loop for handling hash collisions
-	for attempt := 0; attempt < maxRetries; attempt++ {
-		// Phase 1: Propose join (uses caller's context)
+	var workerCtx context.Context
+	workerCtx, c.cancel = context.WithCancel(context.Background())
+
+	go c.acceptProposalsWorker(workerCtx)
+
+	var joinSucceeded = false
+	defer func() {
+		if !joinSucceeded && c.cancel != nil {
+			c.cancel()
+		}
+	}()
+
+	for attempt := range maxRetries {
+		if c.ring.hasSelfCollision() {
+			if attempt >= maxRetries-1 {
+				return fmt.Errorf("failed to generate collision-free node-id after %d attempts", maxRetries)
+			}
+			c.options.logger.Warn("self-collision detected, regenerating node-id",
+				"attempt", attempt+1,
+				"node_id", c.ring.nodeID)
+			c.ring.regenerateNodeID()
+			c.membership.nodeID = c.ring.nodeID
+			continue
+		}
+
 		if err := c.membership.ProposeJoin(ctx); err != nil {
 			return fmt.Errorf("failed to propose join: %w", err)
 		}
 
-		// Phase 2: Wait for confirmation (uses caller's context)
 		confirmed, err := c.waitForJoinConfirmation(ctx)
 		if err != nil {
 			return fmt.Errorf("failed to join ring: %w", err)
 		}
 
 		if confirmed {
-			// Success! Break out of retry loop
 			break
 		}
 
-		// Hash collision detected - regenerate node ID and retry
-		if attempt < maxRetries-1 {
-			c.options.logger.Warn("hash collision detected, regenerating node-id and retrying",
-				"attempt", attempt+1,
-				"max_retries", maxRetries,
-				"old_node_id", c.ring.nodeID)
-
-			c.ring.regenerateNodeID()
-			c.membership.nodeID = c.ring.nodeID // Update membership's nodeID reference
-			c.options.logger.Info("regenerated node-id",
-				"new_node_id", c.ring.nodeID)
-		} else {
-			return fmt.Errorf("failed to join ring after %d attempts: hash collisions persist", maxRetries)
+		if attempt >= maxRetries-1 {
+			return fmt.Errorf("failed to join ring after %d attempts", maxRetries)
 		}
+		c.options.logger.Warn("join timed out. This could be due to possible hash collisions, regenerating node-id and retrying",
+			"attempt", attempt+1,
+			"max_retries", maxRetries,
+			"old_node_id", c.ring.nodeID)
+
+		if err := c.membership.CleanupNodeData(ctx); err != nil {
+			c.options.logger.Warn("failed to cleanup old node data", "error", err)
+		}
+
+		c.ring.regenerateNodeID()
+		c.membership.nodeID = c.ring.nodeID
 	}
+
+	joinSucceeded = true
 
 	// Refresh ring state to get initial partition ownership
 	if err := c.membership.RefreshRingState(ctx); err != nil {
@@ -80,17 +102,9 @@ func (c *coordinator) start(ctx context.Context) error {
 		"vnode_count", c.options.vnodeCount,
 		"owned_partitions", len(c.ring.GetOwnedPartitions()))
 
-	// Create cancellable context for background workers.
-	// We use context.Background() instead of the caller's context because background workers
-	// need to continue running after Start() returns, independent of the caller's context.
-	// The workers are stopped via c.cancel when Stop() is called.
-	var workerCtx context.Context
-	workerCtx, c.cancel = context.WithCancel(context.Background())
-
-	// Start background workers
+	// Start remaining background workers
 	go c.renewLeaseWorker(workerCtx)
 	go c.refreshRingWorker(workerCtx)
-	go c.acceptProposalsWorker(workerCtx)
 	go c.cleanupExpiredLeasesWorker(workerCtx)
 
 	return nil
@@ -108,11 +122,11 @@ func (c *coordinator) stop(ctx context.Context) error {
 }
 
 // waitForJoinConfirmation polls until all vnodes have active leases or timeout.
-// Returns (true, nil) if all vnodes confirmed, (false, nil) if collision detected, or (false, error) on error.
+// Returns (true, nil) if all vnodes confirmed, (false, nil) if timed out, or (false, error) on error.
 func (c *coordinator) waitForJoinConfirmation(ctx context.Context) (bool, error) {
 	var (
-		timeout   = time.After(30 * time.Second)
-		ticker    = time.NewTicker(1 * time.Second)
+		timeout   = time.After(c.options.joinTimeout)
+		ticker    = time.NewTicker(100 * time.Millisecond)
 		confirmed = false
 	)
 	defer ticker.Stop()
@@ -122,7 +136,6 @@ func (c *coordinator) waitForJoinConfirmation(ctx context.Context) (bool, error)
 		case <-ctx.Done():
 			return false, ctx.Err()
 		case <-timeout:
-			// Timeout means proposals were not accepted - likely collision
 			return false, nil
 		case <-ticker.C:
 			var err error
@@ -147,7 +160,7 @@ func (c *coordinator) renewLeaseWorker(ctx context.Context) {
 			return
 		case <-ticker.C:
 			if err := c.membership.RenewLeases(ctx); err != nil {
-				fmt.Printf("failed to renew leases: %v\n", err)
+				c.options.logger.Error("failed to renew leases", "error", err)
 			}
 		}
 	}
@@ -164,7 +177,7 @@ func (c *coordinator) refreshRingWorker(ctx context.Context) {
 			return
 		case <-ticker.C:
 			if err := c.membership.RefreshRingState(ctx); err != nil {
-				fmt.Printf("failed to refresh ring state: %v\n", err)
+				c.options.logger.Error("failed to refresh ring state", "error", err)
 			}
 		}
 	}
@@ -175,13 +188,18 @@ func (c *coordinator) acceptProposalsWorker(ctx context.Context) {
 	var ticker = time.NewTicker(c.options.refreshInterval)
 	defer ticker.Stop()
 
+	// Run immediately on start, then periodically
+	if err := c.membership.AcceptProposals(ctx); err != nil {
+		c.options.logger.Error("failed to accept proposals", "error", err)
+	}
+
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
 			if err := c.membership.AcceptProposals(ctx); err != nil {
-				fmt.Printf("failed to accept proposals: %v\n", err)
+				c.options.logger.Error("failed to accept proposals", "error", err)
 			}
 		}
 	}
@@ -198,7 +216,7 @@ func (c *coordinator) cleanupExpiredLeasesWorker(ctx context.Context) {
 			return
 		case <-ticker.C:
 			if err := c.membership.CleanupExpiredLeases(ctx); err != nil {
-				fmt.Printf("failed to cleanup expired leases: %v\n", err)
+				c.options.logger.Error("failed to cleanup expired leases", "error", err)
 			}
 		}
 	}

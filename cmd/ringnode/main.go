@@ -36,7 +36,7 @@ coordinating with other nodes to distribute partitions across the cluster.`,
 
 	rootCmd.Flags().StringVar(&ringID, "ring-id", "demo_ring", "Ring identifier")
 	rootCmd.Flags().IntVar(&vnodeCount, "vnodes", 8, "Number of virtual nodes")
-	rootCmd.Flags().DurationVar(&leaseTTL, "lease-ttl", 30*time.Second, "Lease time-to-live duration")
+	rootCmd.Flags().DurationVar(&leaseTTL, "lease-ttl", 10*time.Second, "Lease time-to-live duration")
 	rootCmd.Flags().StringVar(&dbURL, "db", "postgres://testuser:testpassword@localhost:5432/leasering_test_db?sslmode=disable", "PostgreSQL connection URL")
 	rootCmd.Flags().BoolVar(&crashMode, "crash", false, "Crash mode: exit immediately on Ctrl+C without graceful shutdown")
 
@@ -62,13 +62,16 @@ func runNode(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create ring with options
+	// Logs go to stderr so they don't get cleared by status updates
 	fmt.Printf("Creating ring node\n")
 	var ring = leasering.NewRing(
 		db,
 		ringID,
 		leasering.WithVNodeCount(vnodeCount),
 		leasering.WithLeaseTTL(leaseTTL),
-		leasering.WithLogger(slog.New(slog.NewTextHandler(os.Stdout, nil))),
+		leasering.WithLogger(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+			Level: slog.LevelInfo,
+		}))),
 	)
 
 	// Start the ring (join and begin background workers)

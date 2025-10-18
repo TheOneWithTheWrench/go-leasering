@@ -3,7 +3,6 @@ package leasering
 import (
 	"context"
 	"database/sql"
-	"fmt"
 	"testing"
 	"time"
 
@@ -23,7 +22,7 @@ func TestIntegration(t *testing.T) {
 		}
 		newRing = func(db *sql.DB, ringID string) *Ring {
 			// Use fast intervals for testing (1s lease TTL)
-			// This gives us: renewal=333ms, refresh=500ms
+			// This gives us: renewal=333ms, refresh=500ms, joinTimeout=1.5s
 			return NewRing(db, ringID, WithLeaseTTL(1*time.Second))
 		}
 	)
@@ -131,40 +130,41 @@ func TestIntegration(t *testing.T) {
 		err = ring3.Start(ctx)
 		require.NoError(t, err)
 
-		// Wait for all nodes to own partitions
+		// Wait for all nodes to own partitions and have consistent state (no overlaps)
 		assert.Eventually(t, func() bool {
-			return len(ring1.GetOwnedPartitions()) > 0 &&
-				len(ring2.GetOwnedPartitions()) > 0 &&
-				len(ring3.GetOwnedPartitions()) > 0
-		}, 2*time.Second, 50*time.Millisecond, "all nodes should own some partitions")
+			var (
+				partitions1 = ring1.GetOwnedPartitions()
+				partitions2 = ring2.GetOwnedPartitions()
+				partitions3 = ring3.GetOwnedPartitions()
+			)
 
-		// Assert - verify partition distribution
-		var (
-			partitions1 = ring1.GetOwnedPartitions()
-			partitions2 = ring2.GetOwnedPartitions()
-			partitions3 = ring3.GetOwnedPartitions()
-		)
-
-		// Verify no overlaps
-		var allPartitions = make(map[int]string)
-		for _, p := range partitions1 {
-			allPartitions[p] = "node-1"
-		}
-		for _, p := range partitions2 {
-			if owner, exists := allPartitions[p]; exists {
-				t.Fatalf("partition %d owned by both node-1 and %s", p, owner)
+			if len(partitions1) == 0 || len(partitions2) == 0 || len(partitions3) == 0 {
+				return false
 			}
-			allPartitions[p] = "node-2"
-		}
-		for _, p := range partitions3 {
-			if owner, exists := allPartitions[p]; exists {
-				t.Fatalf("partition %d owned by both %s and node-3", p, owner)
-			}
-			allPartitions[p] = "node-3"
-		}
 
-		t.Logf("Partition distribution: node-1=%d, node-2=%d, node-3=%d",
-			len(partitions1), len(partitions2), len(partitions3))
+			// Check no overlaps
+			var seen = make(map[int]bool)
+			for _, p := range partitions1 {
+				if seen[p] {
+					return false
+				}
+				seen[p] = true
+			}
+			for _, p := range partitions2 {
+				if seen[p] {
+					return false
+				}
+				seen[p] = true
+			}
+			for _, p := range partitions3 {
+				if seen[p] {
+					return false
+				}
+				seen[p] = true
+			}
+
+			return true
+		}, 3*time.Second, 100*time.Millisecond, "all nodes should own partitions with no overlaps")
 
 		// Cleanup
 		err = ring1.Stop(ctx)
@@ -318,10 +318,9 @@ func TestIntegration(t *testing.T) {
 		t.Parallel()
 		// Arrange
 		var (
-			db     = newDb(t)
-			ctx    = newCtx()
-			rings  = make([]*Ring, 3) // Use 3 nodes instead of 5 for speed
-			nodeID = func(i int) string { return fmt.Sprintf("node-%d", i) }
+			db    = newDb(t)
+			ctx   = newCtx()
+			rings = make([]*Ring, 3) // Use 3 nodes instead of 5 for speed
 		)
 
 		// Act - start 3 nodes
@@ -341,22 +340,26 @@ func TestIntegration(t *testing.T) {
 			return true
 		}, 2*time.Second, 50*time.Millisecond, "all nodes should own partitions")
 
-		// Assert - verify partition coverage
-		var allPartitions = make(map[int][]string)
-
-		// Collect partition ownership from all nodes
-		for i := range 3 {
-			var partitions = rings[i].GetOwnedPartitions()
-			for _, p := range partitions {
-				allPartitions[p] = append(allPartitions[p], nodeID(i))
+		// Wait for all nodes' caches to be consistent (no overlaps)
+		assert.Eventually(t, func() bool {
+			var allPartitions = make(map[int]int) // partition -> count
+			for i := range 3 {
+				var partitions = rings[i].GetOwnedPartitions()
+				for _, p := range partitions {
+					allPartitions[p]++
+				}
 			}
-		}
 
-		// Verify each partition has exactly one owner
-		for p := range 1024 {
-			var owners = allPartitions[p]
-			assert.Len(t, owners, 1, "partition %d should have exactly one owner, got: %v", p, owners)
-		}
+			// Check no partition is claimed by multiple nodes
+			for _, count := range allPartitions {
+				if count > 1 {
+					return false
+				}
+			}
+
+			// Check all 1024 partitions are claimed
+			return len(allPartitions) == 1024
+		}, 3*time.Second, 100*time.Millisecond, "cached state should eventually be consistent")
 
 		// Cleanup
 		for i := range 3 {

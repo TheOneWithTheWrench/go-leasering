@@ -48,6 +48,10 @@ DO UPDATE SET
     vnode_idx = EXCLUDED.vnode_idx,
     expires_at = EXCLUDED.expires_at;`
 
+	insertLeaseSQL = `
+INSERT INTO %s_leases (ring_id, position, node_id, vnode_idx, expires_at)
+VALUES ($1, $2, $3, $4, $5);`
+
 	deleteLeaseSQL = `
 DELETE FROM %s_leases
 WHERE ring_id = $1 AND position = $2;`
@@ -129,6 +133,19 @@ func (q *Queries) SetLease(ctx context.Context, lease *LeaseRecord) error {
 	)
 	if err != nil {
 		return fmt.Errorf("failed to set lease: %w", err)
+	}
+	return nil
+}
+
+// InsertLease inserts a new lease. Returns error if a lease already exists at this position.
+// This is used when accepting proposals to ensure atomic claim of a position.
+func (q *Queries) InsertLease(ctx context.Context, lease *LeaseRecord) error {
+	var query = fmt.Sprintf(insertLeaseSQL, q.tableName)
+	_, err := q.db.ExecContext(ctx, query,
+		lease.RingID, lease.Position, lease.NodeID, lease.VNodeIdx, lease.ExpiresAt,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to insert lease: %w", err)
 	}
 	return nil
 }

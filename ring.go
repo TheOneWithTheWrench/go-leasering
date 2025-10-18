@@ -307,6 +307,19 @@ func (r *Ring) getMyVNodePositions() []int {
 	return positions
 }
 
+// hasSelfCollision checks if any of this node's vnodes hash to the same position.
+func (r *Ring) hasSelfCollision() bool {
+	var positions = r.getMyVNodePositions()
+	var seen = make(map[int]bool, len(positions))
+	for _, pos := range positions {
+		if seen[pos] {
+			return true
+		}
+		seen[pos] = true
+	}
+	return false
+}
+
 // getMyPositions returns a map of all positions owned by this node.
 func (r *Ring) getMyPositions() map[int]bool {
 	r.mu.RLock()

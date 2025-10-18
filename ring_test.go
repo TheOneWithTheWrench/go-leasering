@@ -212,17 +212,41 @@ func TestRing(t *testing.T) {
 		// Arrange
 		var sut = newRing()
 
-		// Act
-		var positions = sut.getMyVNodePositions()
+		// With random node-ids, there's a small chance of self-collision
+		// If detected, regenerate and try again (like production code does)
+		const maxAttempts = 5
+		var positions []int
+		for attempt := 0; attempt < maxAttempts; attempt++ {
+			positions = sut.getMyVNodePositions()
+
+			// Check if positions are unique (no self-collision)
+			var seen = make(map[int]bool)
+			var hasSelfCollision = false
+			for _, pos := range positions {
+				if seen[pos] {
+					hasSelfCollision = true
+					break
+				}
+				seen[pos] = true
+			}
+
+			if !hasSelfCollision {
+				break // Success!
+			}
+
+			// Self-collision detected - regenerate node-id and retry
+			if attempt < maxAttempts-1 {
+				sut.regenerateNodeID()
+			} else {
+				t.Fatal("failed to generate collision-free node-id after max attempts")
+			}
+		}
 
 		// Assert
 		assert.Len(t, positions, sut.options.vnodeCount)
 
-		// All positions should be unique and within ring size
-		var seen = make(map[int]bool)
+		// Verify all positions are within ring size
 		for _, pos := range positions {
-			assert.False(t, seen[pos], "positions should be unique")
-			seen[pos] = true
 			assert.GreaterOrEqual(t, pos, 0)
 			assert.Less(t, pos, sut.options.ringSize)
 		}
