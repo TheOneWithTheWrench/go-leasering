@@ -402,6 +402,15 @@ func (r *Ring) updateMyVNodeExpirations(expiresAt time.Time) {
 	}
 }
 
+// clearOwnedPartitions clears the owned partitions cache.
+// This is called when the node becomes unhealthy (heartbeat fails).
+func (r *Ring) clearOwnedPartitions() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	r.ownedPartitions = []int{}
+}
+
 // isExpired checks if a vnode's lease has expired.
 func isExpired(vnode vnode, now time.Time) bool {
 	return now.After(vnode.ExpiresAt)

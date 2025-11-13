@@ -161,6 +161,10 @@ func (c *coordinator) renewLeaseWorker(ctx context.Context) {
 		case <-ticker.C:
 			if err := c.membership.RenewLeases(ctx); err != nil {
 				c.options.logger.Error("failed to renew leases", "error", err)
+
+				// Clear owned partitions immediately on heartbeat failure
+				c.ring.clearOwnedPartitions()
+				c.options.logger.Warn("heartbeat failed, cleared partition ownership")
 			}
 		}
 	}
@@ -178,6 +182,27 @@ func (c *coordinator) refreshRingWorker(ctx context.Context) {
 		case <-ticker.C:
 			if err := c.membership.RefreshRingState(ctx); err != nil {
 				c.options.logger.Error("failed to refresh ring state", "error", err)
+				continue
+			}
+
+			// Check if we've been evicted from the ring
+			// A node is evicted if it has no partitions after a successful refresh
+			evicted, err := c.membership.CheckIfEvicted(ctx)
+			if err != nil {
+				c.options.logger.Error("failed to check eviction status", "error", err)
+				continue
+			}
+
+			if evicted {
+				c.options.logger.Warn("detected eviction from ring, attempting to re-join")
+
+				// Try to re-join via proposal protocol
+				if err := c.membership.ProposeJoin(ctx); err != nil {
+					c.options.logger.Error("failed to re-propose join after eviction", "error", err)
+					continue
+				}
+
+				c.options.logger.Info("submitted re-join proposals after eviction")
 			}
 		}
 	}

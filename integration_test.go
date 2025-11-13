@@ -13,6 +13,10 @@ import (
 )
 
 func TestIntegration(t *testing.T) {
+	const (
+		testRingID = "test_ring"
+	)
+
 	var (
 		newDb = func(t *testing.T) *sql.DB {
 			return database.SetupTestDatabase(t)
@@ -29,25 +33,22 @@ func TestIntegration(t *testing.T) {
 
 	t.Run("should bootstrap single node into empty ring", func(t *testing.T) {
 		t.Parallel()
-		// Arrange
+
 		var (
-			db   = newDb(t)
-			ctx  = newCtx()
-			node = newRingNode(db, "test_ring")
+			db      = newDb(t)
+			ctx     = newCtx()
+			node    = newRingNode(db, testRingID)
+			queries = database.NewQueries(db, testRingID)
 		)
 
-		// Act
 		err := node.Start(ctx)
-
-		// Assert
 		require.NoError(t, err)
 
-		var partitions = node.GetOwnedPartitions()
+		partitions := node.GetOwnedPartitions()
 		assert.NotEmpty(t, partitions, "bootstrap node should own all partitions")
 
 		// Verify all leases are in database
-		var queries = database.NewQueries(db, "test_ring")
-		var leases, listErr = queries.ListLeases(ctx, "test_ring")
+		leases, listErr := queries.ListLeases(ctx, testRingID)
 		require.NoError(t, listErr)
 		assert.Len(t, leases, 8, "should have 8 vnodes (default)")
 
@@ -58,22 +59,22 @@ func TestIntegration(t *testing.T) {
 
 	t.Run("should have second node join existing ring", func(t *testing.T) {
 		t.Parallel()
-		// Arrange
+
 		var (
 			db    = newDb(t)
 			ctx   = newCtx()
-			node1 = newRingNode(db, "test_ring")
-			node2 = newRingNode(db, "test_ring")
+			node1 = newRingNode(db, testRingID)
+			node2 = newRingNode(db, testRingID)
 		)
 
-		// Act - node-1 joins first
+		// Node-1 joins first
 		err := node1.Start(ctx)
 		require.NoError(t, err)
 
-		var partitions1Before = node1.GetOwnedPartitions()
+		partitions1Before := node1.GetOwnedPartitions()
 		assert.NotEmpty(t, partitions1Before)
 
-		// Act - node-2 joins second
+		// Node-2 joins second
 		err = node2.Start(ctx)
 		require.NoError(t, err)
 
@@ -111,16 +112,16 @@ func TestIntegration(t *testing.T) {
 
 	t.Run("should have three nodes join and distribute partitions", func(t *testing.T) {
 		t.Parallel()
-		// Arrange
+
 		var (
 			db    = newDb(t)
 			ctx   = newCtx()
-			node1 = newRingNode(db, "test_ring")
-			node2 = newRingNode(db, "test_ring")
-			node3 = newRingNode(db, "test_ring")
+			node1 = newRingNode(db, testRingID)
+			node2 = newRingNode(db, testRingID)
+			node3 = newRingNode(db, testRingID)
 		)
 
-		// Act - all nodes join sequentially
+		// All nodes join sequentially
 		err := node1.Start(ctx)
 		require.NoError(t, err)
 
@@ -177,34 +178,31 @@ func TestIntegration(t *testing.T) {
 
 	t.Run("should renew leases continuously", func(t *testing.T) {
 		t.Parallel()
-		// Arrange
+
 		var (
-			db   = newDb(t)
-			ctx  = newCtx()
-			node = newRingNode(db, "test_ring")
+			db      = newDb(t)
+			ctx     = newCtx()
+			node    = newRingNode(db, testRingID)
+			queries = database.NewQueries(db, testRingID)
 		)
 
-		// Act
 		err := node.Start(ctx)
 		require.NoError(t, err)
 		defer node.Stop(ctx)
-
-		// Get initial lease expiration times
-		var queries = database.NewQueries(db, "test_ring")
 
 		// Wait for initial leases to exist
 		var leases1 []*database.LeaseRecord
 		assert.Eventually(t, func() bool {
 			var err error
-			leases1, err = queries.ListLeases(ctx, "test_ring")
+			leases1, err = queries.ListLeases(ctx, testRingID)
 			return err == nil && len(leases1) == 8
 		}, 2*time.Second, 50*time.Millisecond, "initial leases should be created")
 
-		var firstExpiry = leases1[0].ExpiresAt
+		firstExpiry := leases1[0].ExpiresAt
 
 		// Wait for renewal to happen
 		assert.Eventually(t, func() bool {
-			leases2, err := queries.ListLeases(ctx, "test_ring")
+			leases2, err := queries.ListLeases(ctx, testRingID)
 			if err != nil || len(leases2) == 0 {
 				return false
 			}
@@ -217,12 +215,12 @@ func TestIntegration(t *testing.T) {
 		// This test verifies that nodes clean up expired leases of their successors
 		// Note: Cleanup is responsibility-based - each node only cleans successors of its own vnodes
 
-		// Arrange
 		var (
-			db    = newDb(t)
-			ctx   = newCtx()
-			node1 = newRingNode(db, "test_ring")
-			node2 = newRingNode(db, "test_ring")
+			db      = newDb(t)
+			ctx     = newCtx()
+			node1   = newRingNode(db, testRingID)
+			node2   = newRingNode(db, testRingID)
+			queries = database.NewQueries(db, testRingID)
 		)
 
 		// Both nodes join
@@ -238,16 +236,15 @@ func TestIntegration(t *testing.T) {
 			return len(node1.GetOwnedPartitions()) > 0 && len(node2.GetOwnedPartitions()) > 0
 		}, 2*time.Second, 50*time.Millisecond, "both nodes should own partitions")
 
-		// Now manually expire node-2's leases and stop its workers (simulating a crash)
+		// Manually expire node-2's leases and stop its workers (simulating a crash)
 		// Don't call Stop() - that would clean up the leases
 		node2.simulateCrash()
 
-		var queries = database.NewQueries(db, "test_ring")
-		var leases, listErr = queries.ListLeases(ctx, "test_ring")
+		leases, listErr := queries.ListLeases(ctx, testRingID)
 		require.NoError(t, listErr)
 
 		// Expire node-2's leases
-		var expiredTime = time.Now().Add(-10 * time.Second)
+		expiredTime := time.Now().Add(-10 * time.Second)
 		for _, lease := range leases {
 			if lease.NodeID == node2.nodeID {
 				lease.ExpiresAt = expiredTime
@@ -258,7 +255,7 @@ func TestIntegration(t *testing.T) {
 
 		// Wait for cleanup worker to remove some leases
 		assert.Eventually(t, func() bool {
-			finalLeases, err := queries.ListLeases(ctx, "test_ring")
+			finalLeases, err := queries.ListLeases(ctx, testRingID)
 			if err != nil {
 				return false
 			}
@@ -275,12 +272,14 @@ func TestIntegration(t *testing.T) {
 
 	t.Run("should redistribute partitions after node crash", func(t *testing.T) {
 		t.Parallel()
+
 		var (
-			db    = newDb(t)
-			ctx   = newCtx()
-			node1 = newRingNode(db, "test_ring")
-			node2 = newRingNode(db, "test_ring")
-			node3 = newRingNode(db, "test_ring")
+			db      = newDb(t)
+			ctx     = newCtx()
+			node1   = newRingNode(db, testRingID)
+			node2   = newRingNode(db, testRingID)
+			node3   = newRingNode(db, testRingID)
+			queries = database.NewQueries(db, testRingID)
 		)
 
 		// All three nodes join
@@ -301,9 +300,8 @@ func TestIntegration(t *testing.T) {
 		node2.simulateCrash()
 
 		// Expire node-2's leases to simulate them timing out
-		var queries = database.NewQueries(db, "test_ring")
-		var leases, _ = queries.ListLeases(ctx, "test_ring")
-		var expiredTime = time.Now().Add(-10 * time.Second)
+		leases, _ := queries.ListLeases(ctx, testRingID)
+		expiredTime := time.Now().Add(-10 * time.Second)
 		for _, lease := range leases {
 			if lease.NodeID == node2.nodeID {
 				lease.ExpiresAt = expiredTime
@@ -326,11 +324,13 @@ func TestIntegration(t *testing.T) {
 
 	t.Run("should bootstrap into dead ring without stealing from active nodes", func(t *testing.T) {
 		t.Parallel()
+
 		var (
-			db    = newDb(t)
-			ctx   = newCtx()
-			node1 = newRingNode(db, "test_ring")
-			node2 = newRingNode(db, "test_ring")
+			db      = newDb(t)
+			ctx     = newCtx()
+			node1   = newRingNode(db, testRingID)
+			node2   = newRingNode(db, testRingID)
+			queries = database.NewQueries(db, testRingID)
 		)
 
 		// Node-1 joins and bootstraps the ring
@@ -343,9 +343,8 @@ func TestIntegration(t *testing.T) {
 		node1.simulateCrash()
 
 		// Expire node-1's leases to simulate it being dead
-		var queries = database.NewQueries(db, "test_ring")
-		var leases, _ = queries.ListLeases(ctx, "test_ring")
-		var expiredTime = time.Now().Add(-10 * time.Second)
+		leases, _ := queries.ListLeases(ctx, testRingID)
+		expiredTime := time.Now().Add(-10 * time.Second)
 		for _, lease := range leases {
 			lease.ExpiresAt = expiredTime
 			queries.SetLease(ctx, lease)
@@ -362,12 +361,14 @@ func TestIntegration(t *testing.T) {
 
 	t.Run("should use proposal protocol when active node exists", func(t *testing.T) {
 		t.Parallel()
+
 		var (
-			db    = newDb(t)
-			ctx   = newCtx()
-			node1 = newRingNode(db, "test_ring")
-			node2 = newRingNode(db, "test_ring")
-			node3 = newRingNode(db, "test_ring")
+			db      = newDb(t)
+			ctx     = newCtx()
+			node1   = newRingNode(db, testRingID)
+			node2   = newRingNode(db, testRingID)
+			node3   = newRingNode(db, testRingID)
+			queries = database.NewQueries(db, testRingID)
 		)
 
 		// Node-1 joins and bootstraps
@@ -378,9 +379,8 @@ func TestIntegration(t *testing.T) {
 		node1.simulateCrash()
 
 		// Expire node-1's leases
-		var queries = database.NewQueries(db, "test_ring")
-		var leases, _ = queries.ListLeases(ctx, "test_ring")
-		var expiredTime = time.Now().Add(-10 * time.Second)
+		leases, _ := queries.ListLeases(ctx, testRingID)
+		expiredTime := time.Now().Add(-10 * time.Second)
 		for _, lease := range leases {
 			lease.ExpiresAt = expiredTime
 			queries.SetLease(ctx, lease)
@@ -425,15 +425,16 @@ func TestIntegration(t *testing.T) {
 
 	t.Run("should gracefully remove node on Stop", func(t *testing.T) {
 		t.Parallel()
-		// Arrange
+
 		var (
-			db    = newDb(t)
-			ctx   = newCtx()
-			node1 = newRingNode(db, "test_ring")
-			node2 = newRingNode(db, "test_ring")
+			db      = newDb(t)
+			ctx     = newCtx()
+			node1   = newRingNode(db, testRingID)
+			node2   = newRingNode(db, testRingID)
+			queries = database.NewQueries(db, testRingID)
 		)
 
-		// Act - both nodes join
+		// Both nodes join
 		err := node1.Start(ctx)
 		require.NoError(t, err)
 
@@ -450,8 +451,7 @@ func TestIntegration(t *testing.T) {
 		require.NoError(t, err)
 
 		// Verify node-2's leases are removed immediately
-		var queries = database.NewQueries(db, "test_ring")
-		var leases, listErr = queries.ListLeases(ctx, "test_ring")
+		leases, listErr := queries.ListLeases(ctx, testRingID)
 		require.NoError(t, listErr)
 
 		for _, lease := range leases {
@@ -466,24 +466,24 @@ func TestIntegration(t *testing.T) {
 
 	t.Run("should maintain consistent ring state across all nodes", func(t *testing.T) {
 		t.Parallel()
-		// Arrange
+
 		var (
-			db     = newDb(t)
-			ctx    = newCtx()
-			nodes2 = make([]*Ring, 3) // Use 3 nodes instead of 5 for speed
+			db    = newDb(t)
+			ctx   = newCtx()
+			nodes = make([]*Ring, 3) // Use 3 nodes instead of 5 for speed
 		)
 
-		// Act - start 3 nodes
+		// Start 3 nodes
 		for i := range 3 {
-			nodes2[i] = newRingNode(db, "test_ring")
-			err := nodes2[i].Start(ctx)
+			nodes[i] = newRingNode(db, testRingID)
+			err := nodes[i].Start(ctx)
 			require.NoError(t, err)
 		}
 
 		// Wait for all nodes to own partitions
 		assert.Eventually(t, func() bool {
 			for i := range 3 {
-				if len(nodes2[i].GetOwnedPartitions()) == 0 {
+				if len(nodes[i].GetOwnedPartitions()) == 0 {
 					return false
 				}
 			}
@@ -492,9 +492,9 @@ func TestIntegration(t *testing.T) {
 
 		// Wait for all nodes' caches to be consistent (no overlaps)
 		assert.Eventually(t, func() bool {
-			var allPartitions = make(map[int]int) // partition -> count
+			allPartitions := make(map[int]int) // partition -> count
 			for i := range 3 {
-				var partitions = nodes2[i].GetOwnedPartitions()
+				partitions := nodes[i].GetOwnedPartitions()
 				for _, p := range partitions {
 					allPartitions[p]++
 				}
@@ -513,32 +513,29 @@ func TestIntegration(t *testing.T) {
 
 		// Cleanup
 		for i := range 3 {
-			err := nodes2[i].Stop(ctx)
+			err := nodes[i].Stop(ctx)
 			require.NoError(t, err)
 		}
 	})
 
 	t.Run("should handle proposals from multiple nodes concurrently", func(t *testing.T) {
 		t.Parallel()
-		// Arrange
+
 		var (
 			db    = newDb(t)
 			ctx   = newCtx()
-			node1 = newRingNode(db, "test_ring")
+			node1 = newRingNode(db, testRingID)
+			node2 = newRingNode(db, testRingID)
+			node3 = newRingNode(db, testRingID)
+			node4 = newRingNode(db, testRingID)
+			errCh = make(chan error, 3)
 		)
 
 		// Start first node
 		err := node1.Start(ctx)
 		require.NoError(t, err)
 
-		// Act - start 3 nodes concurrently
-		var (
-			node2 = newRingNode(db, "test_ring")
-			node3 = newRingNode(db, "test_ring")
-			node4 = newRingNode(db, "test_ring")
-		)
-
-		var errCh = make(chan error, 3)
+		// Start 3 nodes concurrently
 		go func() { errCh <- node2.Start(ctx) }()
 		go func() { errCh <- node3.Start(ctx) }()
 		go func() { errCh <- node4.Start(ctx) }()
@@ -566,5 +563,88 @@ func TestIntegration(t *testing.T) {
 		require.NoError(t, err)
 		err = node4.Stop(ctx)
 		require.NoError(t, err)
+	})
+
+	t.Run("should clear partitions when heartbeat fails", func(t *testing.T) {
+		t.Parallel()
+
+		var (
+			db   = newDb(t)
+			ctx  = newCtx()
+			node = newRingNode(db, testRingID)
+		)
+
+		// Start node and wait for it to own partitions
+		err := node.Start(ctx)
+		require.NoError(t, err)
+		defer node.Stop(ctx)
+
+		assert.Eventually(t, func() bool {
+			return len(node.GetOwnedPartitions()) > 0
+		}, 2*time.Second, 50*time.Millisecond, "node should own partitions after join")
+
+		// Close the database connection to simulate connection loss
+		err = db.Close()
+		require.NoError(t, err)
+
+		// Wait for next renewal attempt to fail and partitions to be cleared
+		assert.Eventually(t, func() bool {
+			return len(node.GetOwnedPartitions()) == 0
+		}, 2*time.Second, 50*time.Millisecond, "partitions should be cleared when heartbeat fails")
+	})
+
+	t.Run("should re-join ring after being evicted", func(t *testing.T) {
+		t.Parallel()
+
+		var (
+			db      = newDb(t)
+			ctx     = newCtx()
+			node1   = newRingNode(db, testRingID)
+			node2   = newRingNode(db, testRingID)
+			queries = database.NewQueries(db, testRingID)
+		)
+
+		// Both nodes join
+		err := node1.Start(ctx)
+		require.NoError(t, err)
+		defer node1.Stop(ctx)
+
+		err = node2.Start(ctx)
+		require.NoError(t, err)
+		defer node2.Stop(ctx)
+
+		// Wait for both nodes to have partitions
+		assert.Eventually(t, func() bool {
+			return len(node1.GetOwnedPartitions()) > 0 && len(node2.GetOwnedPartitions()) > 0
+		}, 2*time.Second, 50*time.Millisecond, "both nodes should own partitions")
+
+		// Delete node2's leases (simulating eviction by other nodes)
+		leases, _ := queries.ListLeases(ctx, testRingID)
+		for _, lease := range leases {
+			if lease.NodeID == node2.nodeID {
+				err = queries.DeleteLease(ctx, testRingID, lease.Position)
+				require.NoError(t, err)
+			}
+		}
+
+		// Node2 should detect eviction on next refresh and re-propose join
+		assert.Eventually(t, func() bool {
+			leases, err := queries.ListLeases(ctx, testRingID)
+			if err != nil {
+				return false
+			}
+
+			for _, lease := range leases {
+				if lease.NodeID == node2.nodeID {
+					return true
+				}
+			}
+			return false
+		}, 5*time.Second, 100*time.Millisecond, "node2 should re-join after eviction")
+
+		// Node2 should eventually own partitions again
+		assert.Eventually(t, func() bool {
+			return len(node2.GetOwnedPartitions()) > 0
+		}, 5*time.Second, 100*time.Millisecond, "node2 should own partitions after re-join")
 	})
 }

@@ -205,6 +205,25 @@ func (m *membership) RefreshRingState(ctx context.Context) error {
 	return nil
 }
 
+// CheckIfEvicted checks if this node has been evicted from the ring.
+// A node is considered evicted if none of its expected vnode positions have active leases.
+// This uses the already-refreshed local ring state, so it doesn't make any database calls.
+func (m *membership) CheckIfEvicted(ctx context.Context) (bool, error) {
+	var positions = m.ring.getMyVNodePositions()
+
+	// Check the local ring state (already refreshed by RefreshRingState)
+	for _, position := range positions {
+		var vnode, found = m.ring.getVNodeAtPosition(position)
+		if found && vnode.NodeID == m.nodeID {
+			// Found at least one of our leases - we're not evicted
+			return false, nil
+		}
+	}
+
+	// None of our expected positions have our leases - we've been evicted
+	return true, nil
+}
+
 // RenewLeases renews all of this node's leases.
 func (m *membership) RenewLeases(ctx context.Context) error {
 	var positions = m.ring.getMyVNodePositions()
