@@ -13,6 +13,7 @@ import (
 	leasering "go-leasering"
 
 	_ "github.com/lib/pq"
+	"github.com/eiannone/keyboard"
 	"github.com/spf13/cobra"
 )
 
@@ -21,7 +22,6 @@ var (
 	vnodeCount int
 	leaseTTL   time.Duration
 	dbURL      string
-	crashMode  bool
 )
 
 func main() {
@@ -38,7 +38,6 @@ coordinating with other nodes to distribute partitions across the cluster.`,
 	rootCmd.Flags().IntVar(&vnodeCount, "vnodes", 8, "Number of virtual nodes")
 	rootCmd.Flags().DurationVar(&leaseTTL, "lease-ttl", 10*time.Second, "Lease time-to-live duration")
 	rootCmd.Flags().StringVar(&dbURL, "db", "postgres://testuser:testpassword@localhost:5432/leasering_test_db?sslmode=disable", "PostgreSQL connection URL")
-	rootCmd.Flags().BoolVar(&crashMode, "crash", false, "Crash mode: exit immediately on Ctrl+C without graceful shutdown")
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -47,11 +46,17 @@ coordinating with other nodes to distribute partitions across the cluster.`,
 }
 
 func runNode(cmd *cobra.Command, args []string) error {
-	var ctx = context.Background()
+	var (
+		ctx         = context.Background()
+		db          *sql.DB
+		ring        *leasering.Ring
+		err         error
+		isConnected = false
+	)
 
 	// Connect to database
 	fmt.Printf("Connecting to database...\n")
-	var db, err = sql.Open("postgres", dbURL)
+	db, err = sql.Open("postgres", dbURL)
 	if err != nil {
 		return fmt.Errorf("failed to connect to database: %w", err)
 	}
@@ -64,7 +69,7 @@ func runNode(cmd *cobra.Command, args []string) error {
 	// Create ring node
 	// Logs go to stderr so they don't get cleared by status updates
 	fmt.Printf("Creating ring node\n")
-	var ring = leasering.NewRingNode(
+	ring = leasering.NewRingNode(
 		db,
 		ringID,
 		leasering.WithVNodeCount(vnodeCount),
@@ -79,11 +84,12 @@ func runNode(cmd *cobra.Command, args []string) error {
 	if err := ring.Start(ctx); err != nil {
 		return fmt.Errorf("failed to start ring: %w", err)
 	}
+	isConnected = true
 
 	fmt.Printf("✓ Successfully joined ring!\n\n")
 
 	// Print initial state
-	printStatus(ring)
+	printStatus(ring, isConnected)
 
 	// Set up periodic status updates
 	var ticker = time.NewTicker(1 * time.Second)
@@ -93,32 +99,110 @@ func runNode(cmd *cobra.Command, args []string) error {
 	var sigCh = make(chan os.Signal, 1)
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
 
+	// Initialize keyboard
+	if err := keyboard.Open(); err != nil {
+		return fmt.Errorf("failed to initialize keyboard: %w", err)
+	}
+	defer keyboard.Close()
+
+	// Keyboard input channel
+	var keyCh = make(chan rune)
+	go func() {
+		for {
+			char, _, err := keyboard.GetKey()
+			if err != nil {
+				return
+			}
+			keyCh <- char
+		}
+	}()
+
 	// Main loop
 	for {
 		select {
 		case <-ticker.C:
-			printStatus(ring)
-		case sig := <-sigCh:
-			if crashMode {
-				fmt.Printf("\n\n💥 Received signal %v, crashing immediately (no cleanup)...\n", sig)
+			printStatus(ring, isConnected)
+		case key := <-keyCh:
+			switch key {
+			case 'd', 'D':
+				if isConnected {
+					fmt.Fprintf(os.Stderr, "\n🔌 Disconnecting from database...\n")
+					db.Close()
+					isConnected = false
+				}
+			case 'r', 'R':
+				if !isConnected {
+					fmt.Fprintf(os.Stderr, "\n🔌 Reconnecting to database...\n")
+
+					// Stop the old ring if it's still running
+					ring.Stop(ctx)
+
+					// Create new database connection
+					db, err = sql.Open("postgres", dbURL)
+					if err != nil {
+						fmt.Fprintf(os.Stderr, "❌ Failed to reconnect: %v\n", err)
+						break
+					}
+
+					if err := db.PingContext(ctx); err != nil {
+						fmt.Fprintf(os.Stderr, "❌ Failed to ping database: %v\n", err)
+						break
+					}
+
+					// Create new ring with new database connection
+					ring = leasering.NewRingNode(
+						db,
+						ringID,
+						leasering.WithVNodeCount(vnodeCount),
+						leasering.WithLeaseTTL(leaseTTL),
+						leasering.WithLogger(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+							Level: slog.LevelInfo,
+						}))),
+					)
+
+					// Start the ring
+					if err := ring.Start(ctx); err != nil {
+						fmt.Fprintf(os.Stderr, "❌ Failed to rejoin ring: %v\n", err)
+						break
+					}
+
+					isConnected = true
+					fmt.Fprintf(os.Stderr, "✓ Reconnected to database and rejoined ring\n")
+				}
+			case 'c', 'C':
+				fmt.Printf("\n\n💥 Crashing immediately (no cleanup)...\n")
 				os.Exit(1)
+			case 'q', 'Q':
+				fmt.Printf("\n\nShutting down gracefully...\n")
+				if isConnected {
+					if err := ring.Stop(ctx); err != nil {
+						return fmt.Errorf("failed to stop ring: %w", err)
+					}
+					fmt.Printf("✓ Gracefully left ring\n")
+				}
+				return nil
 			}
-			fmt.Printf("\n\nReceived signal %v, shutting down gracefully...\n", sig)
-			if err := ring.Stop(ctx); err != nil {
-				return fmt.Errorf("failed to stop ring: %w", err)
-			}
-			fmt.Printf("✓ Gracefully left ring\n")
-			return nil
+		case sig := <-sigCh:
+			fmt.Printf("\n\n💥 Received signal %v, crashing immediately (no cleanup)...\n", sig)
+			os.Exit(1)
 		}
 	}
 }
 
-func printStatus(ring *leasering.Ring) {
+func printStatus(ring *leasering.Ring, isConnected bool) {
 	fmt.Print("\033[2J\033[H") // Clear screen and move cursor to top
 	fmt.Println(ring.String())
-	if crashMode {
-		fmt.Printf("\n💥 CRASH MODE: Press Ctrl+C to crash (no cleanup)\n")
-	} else {
-		fmt.Printf("\nPress Ctrl+C to gracefully leave the ring\n")
+
+	if !isConnected {
+		fmt.Printf("\n⚠️  DATABASE DISCONNECTED\n")
 	}
+
+	fmt.Printf("\nControls:\n")
+	if isConnected {
+		fmt.Printf("  [d] Disconnect from database\n")
+	} else {
+		fmt.Printf("  [r] Reconnect to database\n")
+	}
+	fmt.Printf("  [c] Crash without cleanup\n")
+	fmt.Printf("  [q] Quit gracefully\n")
 }
