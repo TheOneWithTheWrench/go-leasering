@@ -8,10 +8,10 @@ import (
 
 // Membership handles the join/leave protocol for ring membership.
 type membership struct {
-	ring       *Ring
-	store      *leaseStore
-	nodeID     string
-	leaseTTL   time.Duration
+	ring        *Ring
+	store       *leaseStore
+	nodeID      string
+	leaseTTL    time.Duration
 	proposalTTL time.Duration
 }
 
@@ -228,12 +228,13 @@ func (m *membership) CheckIfEvicted(ctx context.Context) (bool, error) {
 func (m *membership) RenewLeases(ctx context.Context) error {
 	var positions = m.ring.getMyVNodePositions()
 
-	if err := m.store.RenewLeases(ctx, m.nodeID, positions, m.leaseTTL); err != nil {
-		return err
+	expiresAt, err := m.store.RenewLeases(ctx, m.nodeID, positions, m.leaseTTL)
+	if err != nil {
+		m.ring.clearOwnedPartitions()
+		return fmt.Errorf("failed to renew leases: %w", err)
 	}
 
 	// Update local vnodes with new expiration time
-	var expiresAt = time.Now().Add(m.leaseTTL)
 	m.ring.updateMyVNodeExpirations(expiresAt)
 
 	return nil

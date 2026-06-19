@@ -151,21 +151,22 @@ func (ls *leaseStore) DeleteProposal(ctx context.Context, predecessorPos int, ne
 }
 
 // RenewLeases renews all leases for the given positions.
-func (ls *leaseStore) RenewLeases(ctx context.Context, nodeID string, positions []int, ttl time.Duration) error {
+func (ls *leaseStore) RenewLeases(ctx context.Context, nodeID string, positions []int, ttl time.Duration) (time.Time, error) {
 	var expiresAt = time.Now().Add(ttl)
 
 	for i, position := range positions {
-		var l = &lease{
+		var record = &database.LeaseRecord{
+			RingID:    ls.ringID,
 			Position:  position,
 			NodeID:    nodeID,
 			VNodeIdx:  i,
 			ExpiresAt: expiresAt,
 		}
 
-		if err := ls.SetLease(ctx, l); err != nil {
-			return err
+		if err := ls.queries.RenewLease(ctx, record); err != nil {
+			return time.Time{}, fmt.Errorf("failed to renew lease at position %d: %w", position, err)
 		}
 	}
 
-	return nil
+	return expiresAt, nil
 }

@@ -133,6 +133,103 @@ func TestQueries(t *testing.T) {
 		assert.Equal(t, 1, retrieved.VNodeIdx)
 	})
 
+	t.Run("should renew existing lease for current owner", func(t *testing.T) {
+		// Arrange
+		var (
+			sut     = newDb(t)
+			ctx     = newCtx()
+			lease   = newLease("ring-1", 100, "node-1", 0)
+			renewed = newLease("ring-1", 100, "node-1", 0)
+		)
+		renewed.ExpiresAt = lease.ExpiresAt.Add(30 * time.Second)
+
+		err := sut.SetLease(ctx, lease)
+		require.NoError(t, err)
+
+		// Act
+		err = sut.RenewLease(ctx, renewed)
+		require.NoError(t, err)
+
+		var retrieved, getErr = sut.GetLease(ctx, "ring-1", 100)
+
+		// Assert
+		require.NoError(t, getErr)
+		require.NotNil(t, retrieved)
+		assert.Equal(t, "node-1", retrieved.NodeID)
+		assert.Equal(t, 0, retrieved.VNodeIdx)
+		assert.WithinDuration(t, renewed.ExpiresAt, retrieved.ExpiresAt, time.Second)
+	})
+
+	t.Run("should not renew lease owned by another node", func(t *testing.T) {
+		// Arrange
+		var (
+			sut     = newDb(t)
+			ctx     = newCtx()
+			lease   = newLease("ring-1", 100, "node-1", 0)
+			renewed = newLease("ring-1", 100, "node-2", 0)
+		)
+		renewed.ExpiresAt = lease.ExpiresAt.Add(30 * time.Second)
+
+		err := sut.SetLease(ctx, lease)
+		require.NoError(t, err)
+
+		// Act
+		err = sut.RenewLease(ctx, renewed)
+
+		var retrieved, getErr = sut.GetLease(ctx, "ring-1", 100)
+
+		// Assert
+		require.ErrorIs(t, err, ErrLeaseNotRenewed)
+		require.NoError(t, getErr)
+		require.NotNil(t, retrieved)
+		assert.Equal(t, "node-1", retrieved.NodeID)
+		assert.WithinDuration(t, lease.ExpiresAt, retrieved.ExpiresAt, time.Second)
+	})
+
+	t.Run("should not renew expired lease", func(t *testing.T) {
+		// Arrange
+		var (
+			sut     = newDb(t)
+			ctx     = newCtx()
+			lease   = newLease("ring-1", 100, "node-1", 0)
+			renewed = newLease("ring-1", 100, "node-1", 0)
+		)
+		lease.ExpiresAt = time.Now().Add(-1 * time.Second)
+
+		err := sut.SetLease(ctx, lease)
+		require.NoError(t, err)
+
+		// Act
+		err = sut.RenewLease(ctx, renewed)
+
+		var retrieved, getErr = sut.GetLease(ctx, "ring-1", 100)
+
+		// Assert
+		require.ErrorIs(t, err, ErrLeaseNotRenewed)
+		require.NoError(t, getErr)
+		require.NotNil(t, retrieved)
+		assert.WithinDuration(t, lease.ExpiresAt, retrieved.ExpiresAt, time.Second)
+	})
+
+	t.Run("should not insert missing lease during renewal", func(t *testing.T) {
+		// Arrange
+		var (
+			sut     = newDb(t)
+			ctx     = newCtx()
+			renewed = newLease("ring-1", 100, "node-1", 0)
+		)
+
+		// Act
+		err := sut.RenewLease(ctx, renewed)
+
+		var retrieved, getErr = sut.GetLease(ctx, "ring-1", 100)
+
+		// Assert
+		require.ErrorIs(t, err, ErrLeaseNotRenewed)
+		require.NoError(t, getErr)
+		assert.Nil(t, retrieved)
+	})
+
 	t.Run("should delete lease", func(t *testing.T) {
 		// Arrange
 		var (
@@ -210,10 +307,10 @@ func TestQueries(t *testing.T) {
 	t.Run("should list multiple proposals for same predecessor", func(t *testing.T) {
 		// Arrange
 		var (
-			sut        = newDb(t)
-			ctx        = newCtx()
-			proposal1  = newProposal("ring-1", 100, "node-new-1", 0, 150)
-			proposal2  = newProposal("ring-1", 100, "node-new-2", 0, 160)
+			sut       = newDb(t)
+			ctx       = newCtx()
+			proposal1 = newProposal("ring-1", 100, "node-new-1", 0, 150)
+			proposal2 = newProposal("ring-1", 100, "node-new-2", 0, 160)
 		)
 
 		// Act
@@ -233,10 +330,10 @@ func TestQueries(t *testing.T) {
 	t.Run("should update existing proposal on conflict", func(t *testing.T) {
 		// Arrange
 		var (
-			sut        = newDb(t)
-			ctx        = newCtx()
-			proposal1  = newProposal("ring-1", 100, "node-new", 0, 150)
-			proposal2  = newProposal("ring-1", 100, "node-new", 0, 160)
+			sut       = newDb(t)
+			ctx       = newCtx()
+			proposal1 = newProposal("ring-1", 100, "node-new", 0, 150)
+			proposal2 = newProposal("ring-1", 100, "node-new", 0, 160)
 		)
 
 		// Act
@@ -279,10 +376,10 @@ func TestQueries(t *testing.T) {
 	t.Run("should isolate proposals by predecessor position", func(t *testing.T) {
 		// Arrange
 		var (
-			sut        = newDb(t)
-			ctx        = newCtx()
-			proposal1  = newProposal("ring-1", 100, "node-new-1", 0, 150)
-			proposal2  = newProposal("ring-1", 200, "node-new-2", 0, 250)
+			sut       = newDb(t)
+			ctx       = newCtx()
+			proposal1 = newProposal("ring-1", 100, "node-new-1", 0, 150)
+			proposal2 = newProposal("ring-1", 200, "node-new-2", 0, 250)
 		)
 
 		// Act
@@ -307,9 +404,9 @@ func TestQueries(t *testing.T) {
 	t.Run("should list all proposals for ring with batch query", func(t *testing.T) {
 		// Arrange
 		var (
-			sut        = newDb(t)
-			ctx        = newCtx()
-			proposals  = []*ProposalRecord{
+			sut       = newDb(t)
+			ctx       = newCtx()
+			proposals = []*ProposalRecord{
 				newProposal("ring-1", 100, "node-new-1", 0, 150),
 				newProposal("ring-1", 100, "node-new-2", 0, 160),
 				newProposal("ring-1", 200, "node-new-3", 0, 250),

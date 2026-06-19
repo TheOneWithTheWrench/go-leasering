@@ -161,10 +161,6 @@ func (c *coordinator) renewLeaseWorker(ctx context.Context) {
 		case <-ticker.C:
 			if err := c.membership.RenewLeases(ctx); err != nil {
 				c.options.logger.Error("failed to renew leases", "error", err)
-
-				// Clear owned partitions immediately on heartbeat failure
-				c.ring.clearOwnedPartitions()
-				c.options.logger.Warn("heartbeat failed, cleared partition ownership")
 			}
 		}
 	}

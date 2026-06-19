@@ -3,8 +3,11 @@ package database
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 )
+
+var ErrLeaseNotRenewed = errors.New("lease not renewed")
 
 // DBTX is an interface that both sql.DB and sql.Tx implement.
 type DBTX interface {
@@ -52,6 +55,15 @@ DO UPDATE SET
 INSERT INTO %s_leases (ring_id, position, node_id, vnode_idx, expires_at)
 VALUES ($1, $2, $3, $4, $5);`
 
+	renewLeaseSQL = `
+UPDATE %s_leases
+SET expires_at = $5
+WHERE ring_id = $1
+  AND position = $2
+  AND node_id = $3
+  AND vnode_idx = $4
+  AND expires_at > NOW();`
+
 	deleteLeaseSQL = `
 DELETE FROM %s_leases
 WHERE ring_id = $1 AND position = $2;`
@@ -82,7 +94,7 @@ WHERE ring_id = $1 AND predecessor_pos = $2 AND new_node_id = $3 AND new_vnode_i
 // ListLeases returns all leases for a ring, ordered by position.
 func (q *Queries) ListLeases(ctx context.Context, ringID string) ([]*LeaseRecord, error) {
 	var (
-		query = fmt.Sprintf(getLeasesSQL, q.tableName)
+		query     = fmt.Sprintf(getLeasesSQL, q.tableName)
 		rows, err = q.db.QueryContext(ctx, query, ringID)
 	)
 	if err != nil {
@@ -150,6 +162,28 @@ func (q *Queries) InsertLease(ctx context.Context, lease *LeaseRecord) error {
 	return nil
 }
 
+// RenewLease extends an existing lease only if the same node still owns it and it has not expired.
+func (q *Queries) RenewLease(ctx context.Context, lease *LeaseRecord) error {
+	var query = fmt.Sprintf(renewLeaseSQL, q.tableName)
+	result, err := q.db.ExecContext(ctx, query,
+		lease.RingID, lease.Position, lease.NodeID, lease.VNodeIdx, lease.ExpiresAt,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to renew lease: %w", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to check renewed lease rows: %w", err)
+	}
+
+	if rowsAffected != 1 {
+		return fmt.Errorf("%w: position %d", ErrLeaseNotRenewed, lease.Position)
+	}
+
+	return nil
+}
+
 // DeleteLease removes a lease by position.
 func (q *Queries) DeleteLease(ctx context.Context, ringID string, position int) error {
 	var query = fmt.Sprintf(deleteLeaseSQL, q.tableName)
@@ -163,7 +197,7 @@ func (q *Queries) DeleteLease(ctx context.Context, ringID string, position int) 
 // ListProposals returns all proposals for a given predecessor position.
 func (q *Queries) ListProposals(ctx context.Context, ringID string, predecessorPos int) ([]*ProposalRecord, error) {
 	var (
-		query = fmt.Sprintf(getProposalsSQL, q.tableName)
+		query     = fmt.Sprintf(getProposalsSQL, q.tableName)
 		rows, err = q.db.QueryContext(ctx, query, ringID, predecessorPos)
 	)
 	if err != nil {
@@ -192,7 +226,7 @@ func (q *Queries) ListProposals(ctx context.Context, ringID string, predecessorP
 // This is more efficient than calling ListProposals multiple times.
 func (q *Queries) ListAllProposals(ctx context.Context, ringID string) ([]*ProposalRecord, error) {
 	var (
-		query = fmt.Sprintf(getAllProposalsSQL, q.tableName)
+		query     = fmt.Sprintf(getAllProposalsSQL, q.tableName)
 		rows, err = q.db.QueryContext(ctx, query, ringID)
 	)
 	if err != nil {
