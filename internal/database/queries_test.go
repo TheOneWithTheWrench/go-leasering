@@ -711,7 +711,7 @@ WHERE schemaname = current_schema()
 		assert.Equal(t, "node-new-2", proposals200[0].NewNodeID)
 	})
 
-	t.Run("should list all proposals for ring with batch query", func(t *testing.T) {
+	t.Run("should list proposals for predecessor positions", func(t *testing.T) {
 		// Arrange
 		var (
 			sut       = newDb(t)
@@ -730,19 +730,22 @@ WHERE schemaname = current_schema()
 			require.NoError(t, err)
 		}
 
-		var ring1Proposals, err1 = sut.ListAllProposals(ctx, "ring-1")
-		var ring2Proposals, err2 = sut.ListAllProposals(ctx, "ring-2")
+		var ring1Proposals, err1 = sut.ListProposalsForPredecessors(ctx, "ring-1", []int{100, 200})
+		var ring2Proposals, err2 = sut.ListProposalsForPredecessors(ctx, "ring-2", []int{300})
+		var emptyProposals, err3 = sut.ListProposalsForPredecessors(ctx, "ring-1", nil)
 
-		// Assert - should get all proposals for ring-1 in one query
+		// Assert
 		require.NoError(t, err1)
 		require.NoError(t, err2)
+		require.NoError(t, err3)
 		assert.Len(t, ring1Proposals, 3)
 		assert.Len(t, ring2Proposals, 1)
+		assert.Empty(t, emptyProposals)
 
-		// Verify ring-1 proposals are isolated
 		var nodeIDs = make(map[string]bool)
 		for _, p := range ring1Proposals {
 			assert.Equal(t, "ring-1", p.RingID)
+			assert.Contains(t, []int{100, 200}, p.PredecessorPos)
 			nodeIDs[p.NewNodeID] = true
 		}
 		assert.True(t, nodeIDs["node-new-1"])

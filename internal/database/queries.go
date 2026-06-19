@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 )
 
 var (
@@ -97,10 +98,10 @@ SELECT ring_id, predecessor_pos, new_node_id, new_vnode_idx, proposed_pos, expir
 FROM %s_proposals
 WHERE ring_id = $1 AND predecessor_pos = $2;`
 
-	getAllProposalsSQL = `
+	getProposalsForPredecessorsSQL = `
 SELECT ring_id, predecessor_pos, new_node_id, new_vnode_idx, proposed_pos, expires_at
 FROM %s_proposals
-WHERE ring_id = $1;`
+WHERE ring_id = $1 AND predecessor_pos IN (%s);`
 
 	setProposalSQL = `
 INSERT INTO %s_proposals (ring_id, predecessor_pos, new_node_id, new_vnode_idx, proposed_pos, expires_at)
@@ -281,15 +282,29 @@ func (q *Queries) ListProposals(ctx context.Context, ringID string, predecessorP
 	return proposals, nil
 }
 
-// ListAllProposals returns all proposals for a ring.
-// This is more efficient than calling ListProposals multiple times.
-func (q *Queries) ListAllProposals(ctx context.Context, ringID string) ([]*ProposalRecord, error) {
+// ListProposalsForPredecessors returns proposals for a set of predecessor positions.
+func (q *Queries) ListProposalsForPredecessors(ctx context.Context, ringID string, predecessorPositions []int) ([]*ProposalRecord, error) {
+	if len(predecessorPositions) == 0 {
+		return nil, nil
+	}
+
 	var (
-		query     = fmt.Sprintf(getAllProposalsSQL, q.tableName)
-		rows, err = q.db.QueryContext(ctx, query, ringID)
+		placeholders = make([]string, len(predecessorPositions))
+		args         = make([]interface{}, 0, len(predecessorPositions)+1)
+	)
+	args = append(args, ringID)
+
+	for i, position := range predecessorPositions {
+		placeholders[i] = fmt.Sprintf("$%d", i+2)
+		args = append(args, position)
+	}
+
+	var (
+		query     = fmt.Sprintf(getProposalsForPredecessorsSQL, q.tableName, strings.Join(placeholders, ", "))
+		rows, err = q.db.QueryContext(ctx, query, args...)
 	)
 	if err != nil {
-		return nil, fmt.Errorf("failed to list all proposals: %w", err)
+		return nil, fmt.Errorf("failed to list proposals for predecessors: %w", err)
 	}
 	defer rows.Close()
 

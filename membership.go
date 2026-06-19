@@ -91,9 +91,9 @@ func (m *membership) AcceptProposals(ctx context.Context) error {
 		return nil
 	}
 
-	allProposals, err := m.store.ListAllProposals(ctx)
+	allProposals, err := m.store.ListProposalsForPredecessors(ctx, positionMapKeys(myPositions))
 	if err != nil {
-		return fmt.Errorf("failed to list all proposals: %w", err)
+		return fmt.Errorf("failed to list proposals for predecessors: %w", err)
 	}
 
 	proposalsByPred := make(map[int][]*proposal)
@@ -315,4 +315,12 @@ func winningProposal(proposals []*proposal) *proposal {
 		}
 	}
 	return winner
+}
+
+func positionMapKeys(positions map[int]bool) []int {
+	var keys = make([]int, 0, len(positions))
+	for position := range positions {
+		keys = append(keys, position)
+	}
+	return keys
 }

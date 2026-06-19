@@ -136,13 +136,17 @@ func (ls *leaseStore) DeleteExpiredLease(ctx context.Context, lease *lease) erro
 	return nil
 }
 
-// ListAllProposals returns all active proposals in the ring.
-func (ls *leaseStore) ListAllProposals(ctx context.Context) ([]*proposal, error) {
-	var records, err = ls.queries.ListAllProposals(ctx, ls.ringID)
+// ListProposalsForPredecessors returns proposals for the given predecessor positions.
+func (ls *leaseStore) ListProposalsForPredecessors(ctx context.Context, predecessorPositions []int) ([]*proposal, error) {
+	var records, err = ls.queries.ListProposalsForPredecessors(ctx, ls.ringID, predecessorPositions)
 	if err != nil {
-		return nil, fmt.Errorf("failed to list proposals: %w", err)
+		return nil, fmt.Errorf("failed to list proposals for predecessors: %w", err)
 	}
 
+	return proposalRecordsToDomain(records), nil
+}
+
+func proposalRecordsToDomain(records []*database.ProposalRecord) []*proposal {
 	var proposals = make([]*proposal, len(records))
 	for i, record := range records {
 		proposals[i] = &proposal{
@@ -154,7 +158,7 @@ func (ls *leaseStore) ListAllProposals(ctx context.Context) ([]*proposal, error)
 		}
 	}
 
-	return proposals, nil
+	return proposals
 }
 
 // SetProposal writes a proposal to the database.
