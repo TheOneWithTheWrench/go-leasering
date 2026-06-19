@@ -163,33 +163,6 @@ func (r *Ring) rebuildFromLeases(leases []*lease) {
 	r.ownedPartitions = r.calculateOwnedPartitions()
 }
 
-// addVNode adds a single vnode to the ring and recalculates owned partitions.
-// This is used when accepting proposals to immediately update local state.
-func (r *Ring) addVNode(v vnode) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	// Add to nodes map
-	var n, exists = r.nodes[v.NodeID]
-	if !exists {
-		n = &node{
-			ID:     v.NodeID,
-			VNodes: []vnode{},
-		}
-		r.nodes[v.NodeID] = n
-	}
-	n.VNodes = append(n.VNodes, v)
-
-	// Add to vnodes slice and keep sorted
-	r.vnodes = append(r.vnodes, v)
-	sort.Slice(r.vnodes, func(i, j int) bool {
-		return r.vnodes[i].Position < r.vnodes[j].Position
-	})
-
-	// Recalculate owned partitions
-	r.ownedPartitions = r.calculateOwnedPartitions()
-}
-
 // calculateOwnedPartitions computes which partitions this node owns.
 // Must be called with lock held.
 func (r *Ring) calculateOwnedPartitions() []int {
