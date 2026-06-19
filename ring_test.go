@@ -242,7 +242,7 @@ func TestRing(t *testing.T) {
 		// If detected, regenerate and try again (like production code does)
 		const maxAttempts = 5
 		var positions []int
-		for attempt := 0; attempt < maxAttempts; attempt++ {
+		for attempt := range maxAttempts {
 			positions = sut.getMyVNodePositions()
 
 			// Check if positions are unique (no self-collision)

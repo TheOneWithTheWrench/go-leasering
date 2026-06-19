@@ -38,7 +38,10 @@ func SetupTestDatabase(t TestingT) *sql.DB {
 	}
 
 	// Close the initial connection
-	conn.Close()
+	if err := conn.Close(); err != nil {
+		t.Logf("failed to close initial database connection: %v", err)
+		t.FailNow()
+	}
 
 	// Create a new connection with the schema in the connection string
 	var connURLWithSchema = fmt.Sprintf("postgres://testuser:testpassword@localhost:5432/leasering_test_db?sslmode=disable&search_path=%s", schema)

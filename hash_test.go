@@ -31,7 +31,7 @@ func TestHashNodePosition(t *testing.T) {
 	})
 
 	t.Run("position is within ring size", func(t *testing.T) {
-		for i := 0; i < 100; i++ {
+		for i := range 100 {
 			pos := hashNodePosition(nodeID, i, ringSize)
 			assert.GreaterOrEqual(t, pos, 0, "position should be >= 0")
 			assert.Less(t, pos, ringSize, "position should be < ringSize")

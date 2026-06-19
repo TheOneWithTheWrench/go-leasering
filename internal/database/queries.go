@@ -15,9 +15,15 @@ var (
 
 // DBTX is an interface that both sql.DB and sql.Tx implement.
 type DBTX interface {
-	ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error)
-	QueryContext(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error)
-	QueryRowContext(ctx context.Context, query string, args ...interface{}) *sql.Row
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
+func closeRows(rows *sql.Rows, err *error) {
+	if closeErr := rows.Close(); closeErr != nil && *err == nil {
+		*err = fmt.Errorf("failed to close rows: %w", closeErr)
+	}
 }
 
 // Queries provides table-aware database operations.
@@ -121,17 +127,17 @@ WHERE ring_id = $1
 )
 
 // ListLeases returns all active leases for a ring, ordered by position.
-func (q *Queries) ListLeases(ctx context.Context, ringID string) ([]*LeaseRecord, error) {
+func (q *Queries) ListLeases(ctx context.Context, ringID string) (leases []*LeaseRecord, err error) {
 	var (
-		query     = fmt.Sprintf(listActiveLeasesSQL, q.tableName)
-		rows, err = q.db.QueryContext(ctx, query, ringID)
+		query = fmt.Sprintf(listActiveLeasesSQL, q.tableName)
+		rows  *sql.Rows
 	)
+	rows, err = q.db.QueryContext(ctx, query, ringID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list leases: %w", err)
 	}
-	defer rows.Close()
+	defer closeRows(rows, &err)
 
-	var leases []*LeaseRecord
 	for rows.Next() {
 		var lease LeaseRecord
 		if err := rows.Scan(&lease.RingID, &lease.Position, &lease.NodeID, &lease.VNodeIdx, &lease.ExpiresAt); err != nil {
@@ -256,17 +262,17 @@ func (q *Queries) DeleteExpiredLeases(ctx context.Context, ringID string) error 
 }
 
 // ListProposals returns all proposals for a given predecessor position.
-func (q *Queries) ListProposals(ctx context.Context, ringID string, predecessorPos int) ([]*ProposalRecord, error) {
+func (q *Queries) ListProposals(ctx context.Context, ringID string, predecessorPos int) (proposals []*ProposalRecord, err error) {
 	var (
-		query     = fmt.Sprintf(getProposalsSQL, q.tableName)
-		rows, err = q.db.QueryContext(ctx, query, ringID, predecessorPos)
+		query = fmt.Sprintf(getProposalsSQL, q.tableName)
+		rows  *sql.Rows
 	)
+	rows, err = q.db.QueryContext(ctx, query, ringID, predecessorPos)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list proposals: %w", err)
 	}
-	defer rows.Close()
+	defer closeRows(rows, &err)
 
-	var proposals []*ProposalRecord
 	for rows.Next() {
 		var proposal ProposalRecord
 		if err := rows.Scan(&proposal.RingID, &proposal.PredecessorPos, &proposal.NewNodeID,
@@ -284,14 +290,14 @@ func (q *Queries) ListProposals(ctx context.Context, ringID string, predecessorP
 }
 
 // ListProposalsForPredecessors returns proposals for a set of predecessor positions.
-func (q *Queries) ListProposalsForPredecessors(ctx context.Context, ringID string, predecessorPositions []int) ([]*ProposalRecord, error) {
+func (q *Queries) ListProposalsForPredecessors(ctx context.Context, ringID string, predecessorPositions []int) (proposals []*ProposalRecord, err error) {
 	if len(predecessorPositions) == 0 {
 		return nil, nil
 	}
 
 	var (
 		placeholders = make([]string, len(predecessorPositions))
-		args         = make([]interface{}, 0, len(predecessorPositions)+1)
+		args         = make([]any, 0, len(predecessorPositions)+1)
 	)
 	args = append(args, ringID)
 
@@ -301,15 +307,15 @@ func (q *Queries) ListProposalsForPredecessors(ctx context.Context, ringID strin
 	}
 
 	var (
-		query     = fmt.Sprintf(getProposalsForPredecessorsSQL, q.tableName, strings.Join(placeholders, ", "))
-		rows, err = q.db.QueryContext(ctx, query, args...)
+		query = fmt.Sprintf(getProposalsForPredecessorsSQL, q.tableName, strings.Join(placeholders, ", "))
+		rows  *sql.Rows
 	)
+	rows, err = q.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list proposals for predecessors: %w", err)
 	}
-	defer rows.Close()
+	defer closeRows(rows, &err)
 
-	var proposals []*ProposalRecord
 	for rows.Next() {
 		var proposal ProposalRecord
 		if err := rows.Scan(&proposal.RingID, &proposal.PredecessorPos, &proposal.NewNodeID,

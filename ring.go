@@ -361,10 +361,10 @@ func (r *Ring) String() string {
 
 	var b strings.Builder
 
-	b.WriteString(fmt.Sprintf("Ring: %s (Node: %s)\n", r.ringID, r.nodeID))
-	b.WriteString(fmt.Sprintf("Size: %d | Nodes: %d | vnodes: %d\n",
-		r.options.ringSize, len(r.nodes), len(r.vnodes)))
-	b.WriteString(fmt.Sprintf("Owned Partitions: %d\n", len(r.ownedPartitions)))
+	fmt.Fprintf(&b, "Ring: %s (Node: %s)\n", r.ringID, r.nodeID)
+	fmt.Fprintf(&b, "Size: %d | Nodes: %d | vnodes: %d\n",
+		r.options.ringSize, len(r.nodes), len(r.vnodes))
+	fmt.Fprintf(&b, "Owned Partitions: %d\n", len(r.ownedPartitions))
 
 	if len(r.vnodes) == 0 {
 		b.WriteString("\n[Empty Ring]\n")
@@ -403,8 +403,8 @@ func (r *Ring) String() string {
 			rangeStr = fmt.Sprintf("(%d..%d]", prevPos, rangeEnd)
 		}
 
-		b.WriteString(fmt.Sprintf("│ %s @%-5d  %-15s  %-25s  ttl:%s\n",
-			marker, vnode.Position, vnode.NodeID, rangeStr, ttl))
+		fmt.Fprintf(&b, "│ %s @%-5d  %-15s  %-25s  ttl:%s\n",
+			marker, vnode.Position, vnode.NodeID, rangeStr, ttl)
 	}
 
 	b.WriteString("└─────────────────────────────────────────────────────────────┘\n")
@@ -419,7 +419,7 @@ func (r *Ring) String() string {
 		if nodeID == r.nodeID {
 			marker = "●"
 		}
-		b.WriteString(fmt.Sprintf("  %s %-15s  vnodes: %d\n", marker, nodeID, vnodeCount))
+		fmt.Fprintf(&b, "  %s %-15s  vnodes: %d\n", marker, nodeID, vnodeCount)
 	}
 
 	return b.String()
