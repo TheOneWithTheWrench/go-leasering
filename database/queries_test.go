@@ -41,6 +41,29 @@ func TestQueries(t *testing.T) {
 		}
 	)
 
+	t.Run("should create expected indexes", func(t *testing.T) {
+		// Arrange
+		var (
+			db  = SetupTestDatabase(t)
+			ctx = newCtx()
+		)
+
+		// Act
+		err := Migrate(db, "test_leasering")
+		require.NoError(t, err)
+
+		var indexCount int
+		err = db.QueryRowContext(ctx, `
+SELECT COUNT(*)
+FROM pg_indexes
+WHERE schemaname = current_schema()
+  AND indexname IN ('test_leasering_leases_active_idx', 'test_leasering_proposals_expires_idx');`).Scan(&indexCount)
+
+		// Assert
+		require.NoError(t, err)
+		assert.Equal(t, 2, indexCount)
+	})
+
 	t.Run("should set and get lease", func(t *testing.T) {
 		// Arrange
 		var (
@@ -106,6 +129,32 @@ func TestQueries(t *testing.T) {
 		assert.Equal(t, 100, retrieved[0].Position)
 		assert.Equal(t, 500, retrieved[1].Position)
 		assert.Equal(t, 900, retrieved[2].Position)
+	})
+
+	t.Run("should not list expired leases", func(t *testing.T) {
+		// Arrange
+		var (
+			sut          = newDb(t)
+			ctx          = newCtx()
+			activeLease  = newLease("ring-1", 100, "node-1", 0)
+			expiredLease = newLease("ring-1", 500, "node-2", 0)
+		)
+		expiredLease.ExpiresAt = time.Now().Add(-1 * time.Second)
+
+		// Act
+		err := sut.SetLease(ctx, activeLease)
+		require.NoError(t, err)
+
+		err = sut.SetLease(ctx, expiredLease)
+		require.NoError(t, err)
+
+		var retrieved, listErr = sut.ListLeases(ctx, "ring-1")
+
+		// Assert
+		require.NoError(t, listErr)
+		require.Len(t, retrieved, 1)
+		assert.Equal(t, activeLease.Position, retrieved[0].Position)
+		assert.Equal(t, activeLease.NodeID, retrieved[0].NodeID)
 	})
 
 	t.Run("should update existing lease on conflict", func(t *testing.T) {

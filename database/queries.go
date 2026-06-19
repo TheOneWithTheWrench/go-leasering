@@ -31,10 +31,11 @@ func NewQueries(db DBTX, tableName string) *Queries {
 }
 
 var (
-	getLeasesSQL = `
+	listActiveLeasesSQL = `
 SELECT ring_id, position, node_id, vnode_idx, expires_at
 FROM %s_leases
 WHERE ring_id = $1
+  AND expires_at > NOW()
 ORDER BY position ASC;`
 
 	getLeaseSQL = `
@@ -99,10 +100,10 @@ DELETE FROM %s_proposals
 WHERE ring_id = $1 AND predecessor_pos = $2 AND new_node_id = $3 AND new_vnode_idx = $4;`
 )
 
-// ListLeases returns all leases for a ring, ordered by position.
+// ListLeases returns all active leases for a ring, ordered by position.
 func (q *Queries) ListLeases(ctx context.Context, ringID string) ([]*LeaseRecord, error) {
 	var (
-		query     = fmt.Sprintf(getLeasesSQL, q.tableName)
+		query     = fmt.Sprintf(listActiveLeasesSQL, q.tableName)
 		rows, err = q.db.QueryContext(ctx, query, ringID)
 	)
 	if err != nil {
