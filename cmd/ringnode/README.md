@@ -38,7 +38,7 @@ Watch as the nodes automatically:
 - Distribute partitions evenly
 - Maintain leases
 
-Press `Ctrl+C` in any terminal to gracefully remove that node from the ring.
+Press `q` in any terminal to gracefully remove that node from the ring. Press `c` or `Ctrl+C` to simulate a crash without cleanup.
 
 ### Step 3 - Stop the database when done:
 ```bash
@@ -53,7 +53,6 @@ make db-down
 | `--vnodes` | `8` | Number of virtual nodes per physical node |
 | `--lease-ttl` | `10s` | How long leases last before expiring |
 | `--db` | `postgres://testuser:testpassword@localhost:5432/leasering_test_db?sslmode=disable` | PostgreSQL connection URL |
-| `--crash` | `false` | Crash mode: exit immediately on Ctrl+C without cleanup |
 
 **Note:** Node IDs are automatically generated (e.g., `node_abc123`). You don't need to specify them.
 
@@ -79,11 +78,8 @@ go run ./cmd/ringnode --vnodes 16
 go run ./cmd/ringnode --ring-id production_ring
 ```
 
-### Crash mode (simulate node failure):
-```bash
-go run ./cmd/ringnode --crash
-```
-This will exit immediately on Ctrl+C without cleaning up leases, simulating a node crash. Other nodes will detect the expired leases and clean them up.
+### Simulate node failure:
+Run a node normally, then press `c` or `Ctrl+C`. The process exits immediately without cleaning up leases. Other nodes will stop treating the expired leases as active and will clean them up.
 
 ## What You'll See
 
@@ -93,19 +89,21 @@ The CLI displays:
 - Partition ranges owned by each vnode
 - Lease expiration times (TTL)
 - Node summary with vnode counts
-- Live updates every 5 seconds
+- Live updates every 1 second
+- Controls for graceful quit, crash, and database disconnect/reconnect
 
 ## Observing Ring Behavior
 
 1. **Bootstrap**: Start one node - it will own all 1024 partitions
 2. **Join**: Start a second node - watch partitions redistribute
 3. **Scale**: Add more nodes - see balanced distribution
-4. **Leave**: Stop a node (Ctrl+C) - watch remaining nodes absorb partitions
-5. **Crash**: Start a node with `--crash` flag and hit Ctrl+C - watch other nodes detect expired leases and clean them up
+4. **Leave**: Press `q` - watch remaining nodes absorb partitions after graceful cleanup
+5. **Crash**: Press `c` or `Ctrl+C` - watch other nodes ignore and clean up expired leases
+6. **Database disconnect**: Press `d`, then `r` to reconnect and rejoin
 
 ## Building
 
 ```bash
 go build -o bin/ringnode ./cmd/ringnode
-./bin/ringnode --node-id node-1
+./bin/ringnode --ring-id demo_ring --vnodes 8
 ```

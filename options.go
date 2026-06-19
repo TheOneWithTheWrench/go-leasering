@@ -21,7 +21,7 @@ type options struct {
 // defaultOptions returns sensible defaults.
 func defaultOptions() options {
 	var (
-		leaseTTL        = 15 * time.Second
+		leaseTTL        = 30 * time.Second
 		refreshInterval = leaseTTL / 2
 	)
 	return options{

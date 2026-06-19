@@ -1,6 +1,6 @@
 # go-leasering
 
-> ⚠️ **Work in Progress** - This library is  HIGHLY experimental and not production-ready. Use at your own risk.
+> ⚠️ **Work in Progress** - This library is HIGHLY experimental and not production-ready. Use at your own risk.
 
 A distributed consistent hashing ring implementation with lease-based coordination via PostgreSQL.
 
@@ -66,20 +66,22 @@ See `cmd/ringnode/README.md` for more details.
 2. **Lease Acceptance** - Existing nodes accept proposals and grant leases
 3. **Continuous Renewal** - Nodes periodically renew their leases
 4. **Ring Refresh** - Nodes read all leases to maintain consistent ring view
-5. **Failure Detection** - Nodes clean up expired leases of their successors
+5. **Failure Detection** - Nodes periodically remove expired leases and proposals from PostgreSQL
 
 ## Configuration Options
 
 | Option | Default | Description |
 |--------|---------|-------------|
 | `WithVNodeCount(n)` | 8 | Virtual nodes per physical node |
-| `WithLeaseTTL(d)` | 30s | Lease time-to-live |
-| `WithRingSize(n)` | 1024 | Total partition positions |
+| `WithLeaseTTL(d)` | 30s | Lease time-to-live. Renewal, refresh, and join timeout intervals are derived from this value. |
+| `WithLogger(logger)` | no-op logger | Logger used for ring lifecycle and worker errors. Passing `nil` restores the no-op logger. |
+
+The ring currently uses a fixed partition space of 1024 positions. Ring IDs must be valid PostgreSQL identifiers and short enough to leave room for generated table suffixes.
 
 ## Requirements
 
 - PostgreSQL 12+
-- Go 1.24+
+- Go 1.26+
 
 ## Troubleshooting
 
