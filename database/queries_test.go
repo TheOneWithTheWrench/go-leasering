@@ -252,6 +252,148 @@ func TestQueries(t *testing.T) {
 		assert.Nil(t, retrieved)
 	})
 
+	t.Run("should delete expired lease for matching vnode", func(t *testing.T) {
+		// Arrange
+		var (
+			sut   = newDb(t)
+			ctx   = newCtx()
+			lease = newLease("ring-1", 100, "node-1", 0)
+		)
+		lease.ExpiresAt = time.Now().Add(-1 * time.Second)
+
+		err := sut.SetLease(ctx, lease)
+		require.NoError(t, err)
+
+		// Act
+		err = sut.DeleteExpiredLease(ctx, lease)
+		require.NoError(t, err)
+
+		var retrieved, getErr = sut.GetLease(ctx, "ring-1", 100)
+
+		// Assert
+		require.NoError(t, getErr)
+		assert.Nil(t, retrieved)
+	})
+
+	t.Run("should not delete live lease", func(t *testing.T) {
+		// Arrange
+		var (
+			sut   = newDb(t)
+			ctx   = newCtx()
+			lease = newLease("ring-1", 100, "node-1", 0)
+		)
+
+		err := sut.SetLease(ctx, lease)
+		require.NoError(t, err)
+
+		// Act
+		err = sut.DeleteExpiredLease(ctx, lease)
+		require.NoError(t, err)
+
+		var retrieved, getErr = sut.GetLease(ctx, "ring-1", 100)
+
+		// Assert
+		require.NoError(t, getErr)
+		require.NotNil(t, retrieved)
+		assert.Equal(t, "node-1", retrieved.NodeID)
+		assert.WithinDuration(t, lease.ExpiresAt, retrieved.ExpiresAt, time.Second)
+	})
+
+	t.Run("should not delete renewed lease from stale expiry observation", func(t *testing.T) {
+		// Arrange
+		var (
+			sut      = newDb(t)
+			ctx      = newCtx()
+			observed = newLease("ring-1", 100, "node-1", 0)
+			renewed  = newLease("ring-1", 100, "node-1", 0)
+		)
+		observed.ExpiresAt = time.Now().Add(-1 * time.Second)
+		renewed.ExpiresAt = time.Now().Add(30 * time.Second)
+
+		err := sut.SetLease(ctx, renewed)
+		require.NoError(t, err)
+
+		// Act
+		err = sut.DeleteExpiredLease(ctx, observed)
+		require.NoError(t, err)
+
+		var retrieved, getErr = sut.GetLease(ctx, "ring-1", 100)
+
+		// Assert
+		require.NoError(t, getErr)
+		require.NotNil(t, retrieved)
+		assert.Equal(t, "node-1", retrieved.NodeID)
+		assert.WithinDuration(t, renewed.ExpiresAt, retrieved.ExpiresAt, time.Second)
+	})
+
+	t.Run("should not delete expired lease for different owner", func(t *testing.T) {
+		// Arrange
+		var (
+			sut      = newDb(t)
+			ctx      = newCtx()
+			lease    = newLease("ring-1", 100, "node-1", 0)
+			observed = newLease("ring-1", 100, "node-2", 0)
+		)
+		lease.ExpiresAt = time.Now().Add(-1 * time.Second)
+		observed.ExpiresAt = lease.ExpiresAt
+
+		err := sut.SetLease(ctx, lease)
+		require.NoError(t, err)
+
+		// Act
+		err = sut.DeleteExpiredLease(ctx, observed)
+		require.NoError(t, err)
+
+		var retrieved, getErr = sut.GetLease(ctx, "ring-1", 100)
+
+		// Assert
+		require.NoError(t, getErr)
+		require.NotNil(t, retrieved)
+		assert.Equal(t, "node-1", retrieved.NodeID)
+	})
+
+	t.Run("should not delete expired lease for different vnode index", func(t *testing.T) {
+		// Arrange
+		var (
+			sut      = newDb(t)
+			ctx      = newCtx()
+			lease    = newLease("ring-1", 100, "node-1", 0)
+			observed = newLease("ring-1", 100, "node-1", 1)
+		)
+		lease.ExpiresAt = time.Now().Add(-1 * time.Second)
+		observed.ExpiresAt = lease.ExpiresAt
+
+		err := sut.SetLease(ctx, lease)
+		require.NoError(t, err)
+
+		// Act
+		err = sut.DeleteExpiredLease(ctx, observed)
+		require.NoError(t, err)
+
+		var retrieved, getErr = sut.GetLease(ctx, "ring-1", 100)
+
+		// Assert
+		require.NoError(t, getErr)
+		require.NotNil(t, retrieved)
+		assert.Equal(t, 0, retrieved.VNodeIdx)
+	})
+
+	t.Run("should not error when deleting missing expired lease", func(t *testing.T) {
+		// Arrange
+		var (
+			sut   = newDb(t)
+			ctx   = newCtx()
+			lease = newLease("ring-1", 100, "node-1", 0)
+		)
+		lease.ExpiresAt = time.Now().Add(-1 * time.Second)
+
+		// Act
+		err := sut.DeleteExpiredLease(ctx, lease)
+
+		// Assert
+		require.NoError(t, err)
+	})
+
 	t.Run("should isolate leases by ring ID", func(t *testing.T) {
 		// Arrange
 		var (

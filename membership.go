@@ -248,7 +248,14 @@ func (m *membership) CleanupExpiredLeases(ctx context.Context) error {
 	for _, pos := range successorPositions {
 		v, found := m.ring.getVNodeAtPosition(pos)
 		if found && isExpired(v, now) {
-			if err := m.store.DeleteLease(ctx, pos); err != nil {
+			var lease = &lease{
+				Position:  v.Position,
+				NodeID:    v.NodeID,
+				VNodeIdx:  v.Index,
+				ExpiresAt: v.ExpiresAt,
+			}
+
+			if err := m.store.DeleteExpiredLease(ctx, lease); err != nil {
 				return fmt.Errorf("failed to delete expired lease at position %d: %w", pos, err)
 			}
 		}

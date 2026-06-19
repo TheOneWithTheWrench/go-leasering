@@ -68,6 +68,14 @@ WHERE ring_id = $1
 DELETE FROM %s_leases
 WHERE ring_id = $1 AND position = $2;`
 
+	deleteExpiredLeaseSQL = `
+DELETE FROM %s_leases
+WHERE ring_id = $1
+  AND position = $2
+  AND node_id = $3
+  AND vnode_idx = $4
+  AND expires_at <= NOW();`
+
 	getProposalsSQL = `
 SELECT ring_id, predecessor_pos, new_node_id, new_vnode_idx, proposed_pos, expires_at
 FROM %s_proposals
@@ -139,7 +147,7 @@ func (q *Queries) GetLease(ctx context.Context, ringID string, position int) (*L
 
 // SetLease inserts or updates a lease.
 func (q *Queries) SetLease(ctx context.Context, lease *LeaseRecord) error {
-	var query = fmt.Sprintf(setLeaseSQL, q.tableName)
+	query := fmt.Sprintf(setLeaseSQL, q.tableName)
 	_, err := q.db.ExecContext(ctx, query,
 		lease.RingID, lease.Position, lease.NodeID, lease.VNodeIdx, lease.ExpiresAt,
 	)
@@ -152,7 +160,7 @@ func (q *Queries) SetLease(ctx context.Context, lease *LeaseRecord) error {
 // InsertLease inserts a new lease. Returns error if a lease already exists at this position.
 // This is used when accepting proposals to ensure atomic claim of a position.
 func (q *Queries) InsertLease(ctx context.Context, lease *LeaseRecord) error {
-	var query = fmt.Sprintf(insertLeaseSQL, q.tableName)
+	query := fmt.Sprintf(insertLeaseSQL, q.tableName)
 	_, err := q.db.ExecContext(ctx, query,
 		lease.RingID, lease.Position, lease.NodeID, lease.VNodeIdx, lease.ExpiresAt,
 	)
@@ -164,7 +172,7 @@ func (q *Queries) InsertLease(ctx context.Context, lease *LeaseRecord) error {
 
 // RenewLease extends an existing lease only if the same node still owns it and it has not expired.
 func (q *Queries) RenewLease(ctx context.Context, lease *LeaseRecord) error {
-	var query = fmt.Sprintf(renewLeaseSQL, q.tableName)
+	query := fmt.Sprintf(renewLeaseSQL, q.tableName)
 	result, err := q.db.ExecContext(ctx, query,
 		lease.RingID, lease.Position, lease.NodeID, lease.VNodeIdx, lease.ExpiresAt,
 	)
@@ -186,10 +194,23 @@ func (q *Queries) RenewLease(ctx context.Context, lease *LeaseRecord) error {
 
 // DeleteLease removes a lease by position.
 func (q *Queries) DeleteLease(ctx context.Context, ringID string, position int) error {
-	var query = fmt.Sprintf(deleteLeaseSQL, q.tableName)
+	query := fmt.Sprintf(deleteLeaseSQL, q.tableName)
 	_, err := q.db.ExecContext(ctx, query, ringID, position)
 	if err != nil {
 		return fmt.Errorf("failed to delete lease: %w", err)
+	}
+	return nil
+}
+
+// DeleteExpiredLease removes a lease only if the same vnode still owns it and it is expired in the database.
+// Zero rows affected means the lease was renewed or taken over by another vnode, so we don't want to delete it.
+func (q *Queries) DeleteExpiredLease(ctx context.Context, lease *LeaseRecord) error {
+	query := fmt.Sprintf(deleteExpiredLeaseSQL, q.tableName)
+	_, err := q.db.ExecContext(ctx, query,
+		lease.RingID, lease.Position, lease.NodeID, lease.VNodeIdx,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to delete expired lease: %w", err)
 	}
 	return nil
 }
@@ -253,7 +274,7 @@ func (q *Queries) ListAllProposals(ctx context.Context, ringID string) ([]*Propo
 
 // SetProposal inserts or updates a proposal.
 func (q *Queries) SetProposal(ctx context.Context, proposal *ProposalRecord) error {
-	var query = fmt.Sprintf(setProposalSQL, q.tableName)
+	query := fmt.Sprintf(setProposalSQL, q.tableName)
 	_, err := q.db.ExecContext(ctx, query,
 		proposal.RingID, proposal.PredecessorPos, proposal.NewNodeID,
 		proposal.NewVNodeIdx, proposal.ProposedPos, proposal.ExpiresAt,
@@ -266,7 +287,7 @@ func (q *Queries) SetProposal(ctx context.Context, proposal *ProposalRecord) err
 
 // DeleteProposal removes a proposal.
 func (q *Queries) DeleteProposal(ctx context.Context, ringID string, predecessorPos int, newNodeID string, newVNodeIdx int) error {
-	var query = fmt.Sprintf(deleteProposalSQL, q.tableName)
+	query := fmt.Sprintf(deleteProposalSQL, q.tableName)
 	_, err := q.db.ExecContext(ctx, query, ringID, predecessorPos, newNodeID, newVNodeIdx)
 	if err != nil {
 		return fmt.Errorf("failed to delete proposal: %w", err)
