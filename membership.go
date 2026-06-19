@@ -147,8 +147,7 @@ func (m *membership) AcceptProposals(ctx context.Context) error {
 				}
 			)
 
-			// InsertLease will fail if position already has a lease (atomic operation)
-			insertErr := m.store.InsertLease(ctx, lease)
+			insertErr := m.store.InsertLeaseIfPredecessorOwned(ctx, lease, winner.PredecessorPos, m.nodeID)
 			if insertErr != nil {
 				for _, p := range validProposals {
 					if err := m.store.DeleteProposal(ctx, p.PredecessorPos, p.NewNodeID, p.NewVNodeIdx); err != nil {

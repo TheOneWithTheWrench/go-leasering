@@ -7,7 +7,10 @@ import (
 	"fmt"
 )
 
-var ErrLeaseNotRenewed = errors.New("lease not renewed")
+var (
+	ErrLeaseNotInserted = errors.New("lease not inserted")
+	ErrLeaseNotRenewed  = errors.New("lease not renewed")
+)
 
 // DBTX is an interface that both sql.DB and sql.Tx implement.
 type DBTX interface {
@@ -55,6 +58,18 @@ DO UPDATE SET
 	insertLeaseSQL = `
 INSERT INTO %s_leases (ring_id, position, node_id, vnode_idx, expires_at)
 VALUES ($1, $2, $3, $4, $5);`
+
+	insertLeaseIfPredecessorOwnedSQL = `
+INSERT INTO %s_leases (ring_id, position, node_id, vnode_idx, expires_at)
+SELECT $1::varchar, $2::integer, $3::varchar, $4::integer, $5::timestamptz
+WHERE EXISTS (
+    SELECT 1
+    FROM %s_leases
+    WHERE ring_id = $1
+      AND position = $6
+      AND node_id = $7
+      AND expires_at > NOW()
+);`
 
 	renewLeaseSQL = `
 UPDATE %s_leases
@@ -168,6 +183,28 @@ func (q *Queries) InsertLease(ctx context.Context, lease *LeaseRecord) error {
 	if err != nil {
 		return fmt.Errorf("failed to insert lease: %w", err)
 	}
+	return nil
+}
+
+// InsertLeaseIfPredecessorOwned inserts a lease only if the accepter still owns an active predecessor lease.
+func (q *Queries) InsertLeaseIfPredecessorOwned(ctx context.Context, lease *LeaseRecord, predecessorPos int, accepterNodeID string) error {
+	query := fmt.Sprintf(insertLeaseIfPredecessorOwnedSQL, q.tableName, q.tableName)
+	result, err := q.db.ExecContext(ctx, query,
+		lease.RingID, lease.Position, lease.NodeID, lease.VNodeIdx, lease.ExpiresAt, predecessorPos, accepterNodeID,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to insert lease if predecessor owned: %w", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to check inserted lease rows: %w", err)
+	}
+
+	if rowsAffected != 1 {
+		return fmt.Errorf("%w: predecessor position %d", ErrLeaseNotInserted, predecessorPos)
+	}
+
 	return nil
 }
 

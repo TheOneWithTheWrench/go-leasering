@@ -95,6 +95,23 @@ func (ls *leaseStore) InsertLease(ctx context.Context, lease *lease) error {
 	return nil
 }
 
+// InsertLeaseIfPredecessorOwned inserts a lease only if accepterNodeID still owns the active predecessor lease.
+func (ls *leaseStore) InsertLeaseIfPredecessorOwned(ctx context.Context, lease *lease, predecessorPos int, accepterNodeID string) error {
+	var record = &database.LeaseRecord{
+		RingID:    ls.ringID,
+		Position:  lease.Position,
+		NodeID:    lease.NodeID,
+		VNodeIdx:  lease.VNodeIdx,
+		ExpiresAt: lease.ExpiresAt,
+	}
+
+	if err := ls.queries.InsertLeaseIfPredecessorOwned(ctx, record, predecessorPos, accepterNodeID); err != nil {
+		return fmt.Errorf("failed to insert lease at position %d if predecessor owned: %w", lease.Position, err)
+	}
+
+	return nil
+}
+
 // DeleteLease removes a lease from the database.
 func (ls *leaseStore) DeleteLease(ctx context.Context, position int) error {
 	if err := ls.queries.DeleteLease(ctx, ls.ringID, position); err != nil {
