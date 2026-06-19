@@ -30,24 +30,6 @@ func newMembership(ring *Ring, store *leaseStore, nodeID string, leaseTTL, propo
 func (m *membership) ProposeJoin(ctx context.Context) error {
 	positions := m.ring.getMyVNodePositions()
 
-	leases, err := m.store.ListLeases(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to list leases: %w", err)
-	}
-
-	// Check if all existing leases are expired (dead ring scenario).
-	// Use 5s grace period to avoid false positives during normal operation.
-	allExpired := true
-	if len(leases) > 0 {
-		gracePeriod := time.Now().Add(-5 * time.Second)
-		for _, lease := range leases {
-			if lease.ExpiresAt.After(gracePeriod) {
-				allExpired = false
-				break
-			}
-		}
-	}
-
 	if err := m.RefreshRingState(ctx); err != nil {
 		return fmt.Errorf("failed to refresh ring state: %w", err)
 	}
@@ -55,7 +37,7 @@ func (m *membership) ProposeJoin(ctx context.Context) error {
 	for i, position := range positions {
 		predecessorPos := m.ring.findPredecessor(position)
 
-		if predecessorPos == -1 || allExpired {
+		if predecessorPos == -1 {
 			lease := &lease{
 				Position:  position,
 				NodeID:    m.nodeID,
@@ -101,10 +83,7 @@ func (m *membership) AcceptProposals(ctx context.Context) error {
 		proposalsByPred[proposal.PredecessorPos] = append(proposalsByPred[proposal.PredecessorPos], proposal)
 	}
 
-	var (
-		now         = time.Now()
-		acceptedAny = false
-	)
+	acceptedAny := false
 	for position := range myPositions {
 		proposals := proposalsByPred[position]
 		if len(proposals) == 0 {
@@ -117,25 +96,14 @@ func (m *membership) AcceptProposals(ctx context.Context) error {
 		}
 
 		for _, posProposals := range proposalsByPos {
-			var validProposals []*proposal
-			for _, p := range posProposals {
-				if now.After(p.ExpiresAt) {
-					if err := m.store.DeleteProposal(ctx, p.PredecessorPos, p.NewNodeID, p.NewVNodeIdx); err != nil {
-						return fmt.Errorf("failed to delete expired proposal: %w", err)
-					}
-					continue
-				}
-				validProposals = append(validProposals, p)
-			}
-
-			if len(validProposals) == 0 {
+			if len(posProposals) == 0 {
 				continue
 			}
 
-			winner := winningProposal(validProposals)
+			winner := winningProposal(posProposals)
 
 			var (
-				leaseTTL = now.Add(m.leaseTTL)
+				leaseTTL = time.Now().Add(m.leaseTTL)
 				lease    = &lease{
 					Position:  winner.ProposedPos,
 					NodeID:    winner.NewNodeID,
@@ -146,14 +114,14 @@ func (m *membership) AcceptProposals(ctx context.Context) error {
 
 			insertErr := m.store.InsertLeaseIfPredecessorOwned(ctx, lease, winner.PredecessorPos, m.nodeID)
 			if insertErr != nil {
-				if err := m.deleteProposals(ctx, validProposals); err != nil {
+				if err := m.deleteProposals(ctx, posProposals); err != nil {
 					return fmt.Errorf("failed to delete rejected proposal: %w", err)
 				}
 				continue
 			}
 			acceptedAny = true
 
-			if err := m.deleteProposals(ctx, validProposals); err != nil {
+			if err := m.deleteProposals(ctx, posProposals); err != nil {
 				return fmt.Errorf("failed to delete processed proposal: %w", err)
 			}
 		}

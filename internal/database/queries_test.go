@@ -686,4 +686,29 @@ WHERE schemaname = current_schema()
 		assert.True(t, nodeIDs["node-new-3"])
 		assert.False(t, nodeIDs["node-new-4"]) // From ring-2
 	})
+
+	t.Run("should not list expired proposals for predecessor positions", func(t *testing.T) {
+		// Arrange
+		var (
+			sut             = newDb(t)
+			ctx             = newCtx()
+			activeProposal  = newProposal("ring-1", 100, "node-new-1", 0, 150)
+			expiredProposal = newProposal("ring-1", 100, "node-new-2", 0, 160)
+		)
+		expiredProposal.ExpiresAt = time.Now().Add(-1 * time.Second)
+
+		err := sut.SetProposal(ctx, activeProposal)
+		require.NoError(t, err)
+
+		err = sut.SetProposal(ctx, expiredProposal)
+		require.NoError(t, err)
+
+		// Act
+		proposals, err := sut.ListProposalsForPredecessors(ctx, "ring-1", []int{100})
+
+		// Assert
+		require.NoError(t, err)
+		require.Len(t, proposals, 1)
+		assert.Equal(t, activeProposal.NewNodeID, proposals[0].NewNodeID)
+	})
 }

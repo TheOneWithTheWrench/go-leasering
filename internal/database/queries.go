@@ -98,7 +98,9 @@ WHERE ring_id = $1 AND predecessor_pos = $2;`
 	getProposalsForPredecessorsSQL = `
 SELECT ring_id, predecessor_pos, new_node_id, new_vnode_idx, proposed_pos, expires_at
 FROM %s_proposals
-WHERE ring_id = $1 AND predecessor_pos IN (%s);`
+WHERE ring_id = $1
+  AND predecessor_pos IN (%s)
+  AND expires_at > NOW();`
 
 	setProposalSQL = `
 INSERT INTO %s_proposals (ring_id, predecessor_pos, new_node_id, new_vnode_idx, proposed_pos, expires_at)
