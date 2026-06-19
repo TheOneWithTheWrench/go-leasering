@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"go-leasering/database"
+	"go-leasering/internal/database"
 )
 
 // LeaseStore handles all database operations for leases and proposals.

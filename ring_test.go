@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"go-leasering/database"
+	"go-leasering/internal/database"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

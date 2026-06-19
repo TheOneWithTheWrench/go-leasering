@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"go-leasering/database"
+	"go-leasering/internal/database"
 )
 
 var (
