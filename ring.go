@@ -101,8 +101,8 @@ func ValidateRingID(ringID string) error {
 		return errors.New("ringID cannot be empty")
 	}
 
-	if len(ringID) > 63 {
-		return errors.New("ringID must be 63 characters or less")
+	if len(ringID) > database.MaxRingIDLength {
+		return fmt.Errorf("ringID must be %d characters or less", database.MaxRingIDLength)
 	}
 
 	if !validRingIDPattern.MatchString(ringID) {

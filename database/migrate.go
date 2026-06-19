@@ -5,6 +5,13 @@ import (
 	"fmt"
 )
 
+const (
+	MaxIdentifierLength  = 63
+	LeasesTableSuffix    = "_leases"
+	ProposalsTableSuffix = "_proposals"
+	MaxRingIDLength      = MaxIdentifierLength - len(ProposalsTableSuffix)
+)
+
 var (
 	createLeasesTableSQL = `
 CREATE TABLE IF NOT EXISTS %s_leases (

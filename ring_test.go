@@ -2,8 +2,11 @@ package leasering
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 	"time"
+
+	"go-leasering/database"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -48,6 +51,29 @@ func TestRing(t *testing.T) {
 
 		// Assert
 		assert.Empty(t, partitions)
+	})
+
+	t.Run("should allow ring ID at max generated table name length", func(t *testing.T) {
+		// Arrange
+		var ringID = "a" + strings.Repeat("b", database.MaxRingIDLength-1)
+
+		// Act
+		err := ValidateRingID(ringID)
+
+		// Assert
+		require.NoError(t, err)
+	})
+
+	t.Run("should reject ring ID that would exceed generated table name length", func(t *testing.T) {
+		// Arrange
+		var ringID = "a" + strings.Repeat("b", database.MaxRingIDLength)
+
+		// Act
+		err := ValidateRingID(ringID)
+
+		// Assert
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), fmt.Sprintf("%d characters or less", database.MaxRingIDLength))
 	})
 
 	t.Run("should rebuild from leases with single node", func(t *testing.T) {
