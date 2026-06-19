@@ -75,7 +75,7 @@ func (c *coordinator) start(ctx context.Context) error {
 		if attempt >= maxRetries-1 {
 			return fmt.Errorf("failed to join ring after %d attempts", maxRetries)
 		}
-		c.options.logger.Warn("join timed out. This could be due to possible hash collisions, regenerating node-id and retrying",
+		c.options.logger.Warn("join timed out, regenerating node-id and retrying",
 			"attempt", attempt+1,
 			"max_retries", maxRetries,
 			"old_node_id", c.ring.nodeID)

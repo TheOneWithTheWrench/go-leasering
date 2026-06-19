@@ -30,7 +30,7 @@ func defaultOptions() options {
 		leaseTTL:        leaseTTL,
 		renewalInterval: leaseTTL / 3,
 		refreshInterval: refreshInterval,
-		proposalTTL:     10 * time.Second,
+		proposalTTL:     leaseTTL,
 		joinTimeout:     3 * refreshInterval,
 		logger:          slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
@@ -45,6 +45,7 @@ func WithLeaseTTL(ttl time.Duration) Option {
 		o.leaseTTL = ttl
 		o.renewalInterval = ttl / 3
 		o.refreshInterval = ttl / 2
+		o.proposalTTL = ttl
 		o.joinTimeout = 3 * o.refreshInterval
 	}
 }
