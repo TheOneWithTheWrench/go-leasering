@@ -365,36 +365,6 @@ func TestRing(t *testing.T) {
 		assert.False(t, found)
 	})
 
-	t.Run("should detect expired vnode", func(t *testing.T) {
-		// Arrange
-		var (
-			now   = time.Now()
-			vnode = vnode{
-				NodeID:    "node-1",
-				Position:  100,
-				ExpiresAt: now.Add(-1 * time.Second),
-			}
-		)
-
-		// Act & Assert
-		assert.True(t, isExpired(vnode, now))
-	})
-
-	t.Run("should detect non-expired vnode", func(t *testing.T) {
-		// Arrange
-		var (
-			now   = time.Now()
-			vnode = vnode{
-				NodeID:    "node-1",
-				Position:  100,
-				ExpiresAt: now.Add(30 * time.Second),
-			}
-		)
-
-		// Act & Assert
-		assert.False(t, isExpired(vnode, now))
-	})
-
 	t.Run("should print visual representation of ring", func(t *testing.T) {
 		// Arrange
 		var sut = newRing()

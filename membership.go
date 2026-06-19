@@ -241,25 +241,14 @@ func (m *membership) RenewLeases(ctx context.Context) error {
 	return nil
 }
 
-// CleanupExpiredLeases removes expired leases of immediate successors.
-func (m *membership) CleanupExpiredLeases(ctx context.Context) error {
-	successorPositions := m.ring.getMySuccessorPositions()
+// CleanupExpiredRecords removes expired leases and proposals from the database.
+func (m *membership) CleanupExpiredRecords(ctx context.Context) error {
+	if err := m.store.DeleteExpiredLeases(ctx); err != nil {
+		return fmt.Errorf("failed to delete expired leases: %w", err)
+	}
 
-	now := time.Now()
-	for _, pos := range successorPositions {
-		v, found := m.ring.getVNodeAtPosition(pos)
-		if found && isExpired(v, now) {
-			lease := &lease{
-				Position:  v.Position,
-				NodeID:    v.NodeID,
-				VNodeIdx:  v.Index,
-				ExpiresAt: v.ExpiresAt,
-			}
-
-			if err := m.store.DeleteExpiredLease(ctx, lease); err != nil {
-				return fmt.Errorf("failed to delete expired lease at position %d: %w", pos, err)
-			}
-		}
+	if err := m.store.DeleteExpiredProposals(ctx); err != nil {
+		return fmt.Errorf("failed to delete expired proposals: %w", err)
 	}
 
 	return nil

@@ -297,36 +297,6 @@ func (r *Ring) getMyPositions() map[int]bool {
 	return myPositions
 }
 
-// getMySuccessorPositions returns the positions of immediate successors to this node's vnodes.
-func (r *Ring) getMySuccessorPositions() []int {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-
-	var successors = make([]int, 0)
-	for _, vnode := range r.vnodes {
-		if vnode.NodeID != r.nodeID {
-			continue
-		}
-
-		var successorIdx = -1
-		for i := range r.vnodes {
-			if r.vnodes[i].Position > vnode.Position {
-				successorIdx = i
-				break
-			}
-		}
-
-		if successorIdx == -1 && len(r.vnodes) > 0 {
-			successorIdx = 0
-		}
-
-		if successorIdx != -1 && r.vnodes[successorIdx].Position != vnode.Position {
-			successors = append(successors, r.vnodes[successorIdx].Position)
-		}
-	}
-	return successors
-}
-
 // getSuccessorPosition returns the next vnode position after the given position.
 // Returns -1 if ring is empty.
 func (r *Ring) getSuccessorPosition(position int) int {
@@ -382,11 +352,6 @@ func (r *Ring) clearOwnedPartitions() {
 	defer r.mu.Unlock()
 
 	r.ownedPartitions = []int{}
-}
-
-// isExpired checks if a vnode's lease has expired.
-func isExpired(vnode vnode, now time.Time) bool {
-	return now.After(vnode.ExpiresAt)
 }
 
 // String returns a visual representation of the ring state.

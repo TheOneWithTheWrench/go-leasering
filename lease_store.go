@@ -120,18 +120,10 @@ func (ls *leaseStore) DeleteLease(ctx context.Context, position int) error {
 	return nil
 }
 
-// DeleteExpiredLease removes a lease only if it is still owned by the same vnode and expired in the database.
-func (ls *leaseStore) DeleteExpiredLease(ctx context.Context, lease *lease) error {
-	var record = &database.LeaseRecord{
-		RingID:    ls.ringID,
-		Position:  lease.Position,
-		NodeID:    lease.NodeID,
-		VNodeIdx:  lease.VNodeIdx,
-		ExpiresAt: lease.ExpiresAt,
-	}
-
-	if err := ls.queries.DeleteExpiredLease(ctx, record); err != nil {
-		return fmt.Errorf("failed to delete expired lease at position %d: %w", lease.Position, err)
+// DeleteExpiredLeases removes all expired leases for this ring.
+func (ls *leaseStore) DeleteExpiredLeases(ctx context.Context) error {
+	if err := ls.queries.DeleteExpiredLeases(ctx, ls.ringID); err != nil {
+		return fmt.Errorf("failed to delete expired leases: %w", err)
 	}
 	return nil
 }
@@ -183,6 +175,14 @@ func (ls *leaseStore) SetProposal(ctx context.Context, proposal *proposal) error
 func (ls *leaseStore) DeleteProposal(ctx context.Context, predecessorPos int, newNodeID string, newVNodeIdx int) error {
 	if err := ls.queries.DeleteProposal(ctx, ls.ringID, predecessorPos, newNodeID, newVNodeIdx); err != nil {
 		return fmt.Errorf("failed to delete proposal: %w", err)
+	}
+	return nil
+}
+
+// DeleteExpiredProposals removes all expired proposals for this ring.
+func (ls *leaseStore) DeleteExpiredProposals(ctx context.Context) error {
+	if err := ls.queries.DeleteExpiredProposals(ctx, ls.ringID); err != nil {
+		return fmt.Errorf("failed to delete expired proposals: %w", err)
 	}
 	return nil
 }

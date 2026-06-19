@@ -85,12 +85,9 @@ WHERE ring_id = $1
 DELETE FROM %s_leases
 WHERE ring_id = $1 AND position = $2;`
 
-	deleteExpiredLeaseSQL = `
+	deleteExpiredLeasesSQL = `
 DELETE FROM %s_leases
 WHERE ring_id = $1
-  AND position = $2
-  AND node_id = $3
-  AND vnode_idx = $4
   AND expires_at <= NOW();`
 
 	getProposalsSQL = `
@@ -114,6 +111,11 @@ DO UPDATE SET
 	deleteProposalSQL = `
 DELETE FROM %s_proposals
 WHERE ring_id = $1 AND predecessor_pos = $2 AND new_node_id = $3 AND new_vnode_idx = $4;`
+
+	deleteExpiredProposalsSQL = `
+DELETE FROM %s_proposals
+WHERE ring_id = $1
+  AND expires_at <= NOW();`
 )
 
 // ListLeases returns all active leases for a ring, ordered by position.
@@ -241,15 +243,12 @@ func (q *Queries) DeleteLease(ctx context.Context, ringID string, position int) 
 	return nil
 }
 
-// DeleteExpiredLease removes a lease only if the same vnode still owns it and it is expired in the database.
-// Zero rows affected means the lease was renewed or taken over by another vnode, so we don't want to delete it.
-func (q *Queries) DeleteExpiredLease(ctx context.Context, lease *LeaseRecord) error {
-	query := fmt.Sprintf(deleteExpiredLeaseSQL, q.tableName)
-	_, err := q.db.ExecContext(ctx, query,
-		lease.RingID, lease.Position, lease.NodeID, lease.VNodeIdx,
-	)
+// DeleteExpiredLeases removes all expired leases for a ring.
+func (q *Queries) DeleteExpiredLeases(ctx context.Context, ringID string) error {
+	query := fmt.Sprintf(deleteExpiredLeasesSQL, q.tableName)
+	_, err := q.db.ExecContext(ctx, query, ringID)
 	if err != nil {
-		return fmt.Errorf("failed to delete expired lease: %w", err)
+		return fmt.Errorf("failed to delete expired leases: %w", err)
 	}
 	return nil
 }
@@ -344,6 +343,16 @@ func (q *Queries) DeleteProposal(ctx context.Context, ringID string, predecessor
 	_, err := q.db.ExecContext(ctx, query, ringID, predecessorPos, newNodeID, newVNodeIdx)
 	if err != nil {
 		return fmt.Errorf("failed to delete proposal: %w", err)
+	}
+	return nil
+}
+
+// DeleteExpiredProposals removes all expired proposals for a ring.
+func (q *Queries) DeleteExpiredProposals(ctx context.Context, ringID string) error {
+	query := fmt.Sprintf(deleteExpiredProposalsSQL, q.tableName)
+	_, err := q.db.ExecContext(ctx, query, ringID)
+	if err != nil {
+		return fmt.Errorf("failed to delete expired proposals: %w", err)
 	}
 	return nil
 }

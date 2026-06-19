@@ -420,146 +420,42 @@ WHERE schemaname = current_schema()
 		assert.Nil(t, retrieved)
 	})
 
-	t.Run("should delete expired lease for matching vnode", func(t *testing.T) {
+	t.Run("should delete expired leases for ring", func(t *testing.T) {
 		// Arrange
 		var (
-			sut   = newDb(t)
-			ctx   = newCtx()
-			lease = newLease("ring-1", 100, "node-1", 0)
+			sut          = newDb(t)
+			ctx          = newCtx()
+			expiredLease = newLease("ring-1", 100, "node-1", 0)
+			activeLease  = newLease("ring-1", 200, "node-2", 0)
+			otherRing    = newLease("ring-2", 300, "node-3", 0)
 		)
-		lease.ExpiresAt = time.Now().Add(-1 * time.Second)
+		expiredLease.ExpiresAt = time.Now().Add(-1 * time.Second)
+		otherRing.ExpiresAt = time.Now().Add(-1 * time.Second)
 
-		err := sut.SetLease(ctx, lease)
+		err := sut.SetLease(ctx, expiredLease)
+		require.NoError(t, err)
+
+		err = sut.SetLease(ctx, activeLease)
+		require.NoError(t, err)
+
+		err = sut.SetLease(ctx, otherRing)
 		require.NoError(t, err)
 
 		// Act
-		err = sut.DeleteExpiredLease(ctx, lease)
+		err = sut.DeleteExpiredLeases(ctx, "ring-1")
 		require.NoError(t, err)
 
-		var retrieved, getErr = sut.GetLease(ctx, "ring-1", 100)
+		retrievedExpired, getExpiredErr := sut.GetLease(ctx, "ring-1", 100)
+		retrievedActive, getActiveErr := sut.GetLease(ctx, "ring-1", 200)
+		retrievedOtherRing, getOtherRingErr := sut.GetLease(ctx, "ring-2", 300)
 
 		// Assert
-		require.NoError(t, getErr)
-		assert.Nil(t, retrieved)
-	})
-
-	t.Run("should not delete live lease", func(t *testing.T) {
-		// Arrange
-		var (
-			sut   = newDb(t)
-			ctx   = newCtx()
-			lease = newLease("ring-1", 100, "node-1", 0)
-		)
-
-		err := sut.SetLease(ctx, lease)
-		require.NoError(t, err)
-
-		// Act
-		err = sut.DeleteExpiredLease(ctx, lease)
-		require.NoError(t, err)
-
-		var retrieved, getErr = sut.GetLease(ctx, "ring-1", 100)
-
-		// Assert
-		require.NoError(t, getErr)
-		require.NotNil(t, retrieved)
-		assert.Equal(t, "node-1", retrieved.NodeID)
-		assert.WithinDuration(t, lease.ExpiresAt, retrieved.ExpiresAt, time.Second)
-	})
-
-	t.Run("should not delete renewed lease from stale expiry observation", func(t *testing.T) {
-		// Arrange
-		var (
-			sut      = newDb(t)
-			ctx      = newCtx()
-			observed = newLease("ring-1", 100, "node-1", 0)
-			renewed  = newLease("ring-1", 100, "node-1", 0)
-		)
-		observed.ExpiresAt = time.Now().Add(-1 * time.Second)
-		renewed.ExpiresAt = time.Now().Add(30 * time.Second)
-
-		err := sut.SetLease(ctx, renewed)
-		require.NoError(t, err)
-
-		// Act
-		err = sut.DeleteExpiredLease(ctx, observed)
-		require.NoError(t, err)
-
-		var retrieved, getErr = sut.GetLease(ctx, "ring-1", 100)
-
-		// Assert
-		require.NoError(t, getErr)
-		require.NotNil(t, retrieved)
-		assert.Equal(t, "node-1", retrieved.NodeID)
-		assert.WithinDuration(t, renewed.ExpiresAt, retrieved.ExpiresAt, time.Second)
-	})
-
-	t.Run("should not delete expired lease for different owner", func(t *testing.T) {
-		// Arrange
-		var (
-			sut      = newDb(t)
-			ctx      = newCtx()
-			lease    = newLease("ring-1", 100, "node-1", 0)
-			observed = newLease("ring-1", 100, "node-2", 0)
-		)
-		lease.ExpiresAt = time.Now().Add(-1 * time.Second)
-		observed.ExpiresAt = lease.ExpiresAt
-
-		err := sut.SetLease(ctx, lease)
-		require.NoError(t, err)
-
-		// Act
-		err = sut.DeleteExpiredLease(ctx, observed)
-		require.NoError(t, err)
-
-		var retrieved, getErr = sut.GetLease(ctx, "ring-1", 100)
-
-		// Assert
-		require.NoError(t, getErr)
-		require.NotNil(t, retrieved)
-		assert.Equal(t, "node-1", retrieved.NodeID)
-	})
-
-	t.Run("should not delete expired lease for different vnode index", func(t *testing.T) {
-		// Arrange
-		var (
-			sut      = newDb(t)
-			ctx      = newCtx()
-			lease    = newLease("ring-1", 100, "node-1", 0)
-			observed = newLease("ring-1", 100, "node-1", 1)
-		)
-		lease.ExpiresAt = time.Now().Add(-1 * time.Second)
-		observed.ExpiresAt = lease.ExpiresAt
-
-		err := sut.SetLease(ctx, lease)
-		require.NoError(t, err)
-
-		// Act
-		err = sut.DeleteExpiredLease(ctx, observed)
-		require.NoError(t, err)
-
-		var retrieved, getErr = sut.GetLease(ctx, "ring-1", 100)
-
-		// Assert
-		require.NoError(t, getErr)
-		require.NotNil(t, retrieved)
-		assert.Equal(t, 0, retrieved.VNodeIdx)
-	})
-
-	t.Run("should not error when deleting missing expired lease", func(t *testing.T) {
-		// Arrange
-		var (
-			sut   = newDb(t)
-			ctx   = newCtx()
-			lease = newLease("ring-1", 100, "node-1", 0)
-		)
-		lease.ExpiresAt = time.Now().Add(-1 * time.Second)
-
-		// Act
-		err := sut.DeleteExpiredLease(ctx, lease)
-
-		// Assert
-		require.NoError(t, err)
+		require.NoError(t, getExpiredErr)
+		require.NoError(t, getActiveErr)
+		require.NoError(t, getOtherRingErr)
+		assert.Nil(t, retrievedExpired)
+		require.NotNil(t, retrievedActive)
+		require.NotNil(t, retrievedOtherRing)
 	})
 
 	t.Run("should isolate leases by ring ID", func(t *testing.T) {
@@ -681,6 +577,43 @@ WHERE schemaname = current_schema()
 		// Assert
 		require.NoError(t, listErr)
 		assert.Empty(t, retrieved)
+	})
+
+	t.Run("should delete expired proposals for ring", func(t *testing.T) {
+		// Arrange
+		var (
+			sut             = newDb(t)
+			ctx             = newCtx()
+			expiredProposal = newProposal("ring-1", 100, "node-new-1", 0, 150)
+			activeProposal  = newProposal("ring-1", 100, "node-new-2", 0, 160)
+			otherRing       = newProposal("ring-2", 100, "node-new-3", 0, 170)
+		)
+		expiredProposal.ExpiresAt = time.Now().Add(-1 * time.Second)
+		otherRing.ExpiresAt = time.Now().Add(-1 * time.Second)
+
+		err := sut.SetProposal(ctx, expiredProposal)
+		require.NoError(t, err)
+
+		err = sut.SetProposal(ctx, activeProposal)
+		require.NoError(t, err)
+
+		err = sut.SetProposal(ctx, otherRing)
+		require.NoError(t, err)
+
+		// Act
+		err = sut.DeleteExpiredProposals(ctx, "ring-1")
+		require.NoError(t, err)
+
+		ring1Proposals, ring1Err := sut.ListProposals(ctx, "ring-1", 100)
+		ring2Proposals, ring2Err := sut.ListProposals(ctx, "ring-2", 100)
+
+		// Assert
+		require.NoError(t, ring1Err)
+		require.NoError(t, ring2Err)
+		require.Len(t, ring1Proposals, 1)
+		require.Len(t, ring2Proposals, 1)
+		assert.Equal(t, activeProposal.NewNodeID, ring1Proposals[0].NewNodeID)
+		assert.Equal(t, otherRing.NewNodeID, ring2Proposals[0].NewNodeID)
 	})
 
 	t.Run("should isolate proposals by predecessor position", func(t *testing.T) {

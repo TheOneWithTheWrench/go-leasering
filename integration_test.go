@@ -198,7 +198,10 @@ func TestIntegration(t *testing.T) {
 			return err == nil && len(leases1) == 8
 		}, 2*time.Second, 50*time.Millisecond, "initial leases should be created")
 
-		firstExpiry := leases1[0].ExpiresAt
+		initialExpiries := make(map[int]time.Time, len(leases1))
+		for _, lease := range leases1 {
+			initialExpiries[lease.Position] = lease.ExpiresAt
+		}
 
 		// Wait for renewal to happen
 		assert.Eventually(t, func() bool {
@@ -206,14 +209,18 @@ func TestIntegration(t *testing.T) {
 			if err != nil || len(leases2) == 0 {
 				return false
 			}
-			return leases2[0].ExpiresAt.After(firstExpiry)
+			for _, lease := range leases2 {
+				initialExpiry, found := initialExpiries[lease.Position]
+				if found && lease.ExpiresAt.After(initialExpiry) {
+					return true
+				}
+			}
+			return false
 		}, 2*time.Second, 50*time.Millisecond, "lease should be renewed with later expiration time")
 	})
 
-	t.Run("should cleanup expired successor leases", func(t *testing.T) {
+	t.Run("should cleanup expired leases", func(t *testing.T) {
 		t.Parallel()
-		// This test verifies that nodes clean up expired leases of their successors
-		// Note: Cleanup is responsibility-based - each node only cleans successors of its own vnodes
 
 		var (
 			db      = newDb(t)
@@ -244,30 +251,30 @@ func TestIntegration(t *testing.T) {
 		require.NoError(t, listErr)
 
 		// Expire node-2's leases
-		expiredTime := time.Now().Add(-10 * time.Second)
+		var (
+			expiredTime    = time.Now().Add(-10 * time.Second)
+			node2Positions []int
+		)
 		for _, lease := range leases {
 			if lease.NodeID == node2.nodeID {
+				node2Positions = append(node2Positions, lease.Position)
 				lease.ExpiresAt = expiredTime
 				err = queries.SetLease(ctx, lease)
 				require.NoError(t, err)
 			}
 		}
+		require.NotEmpty(t, node2Positions)
 
-		// Wait for cleanup worker to remove some leases
+		// Wait for cleanup worker to remove expired leases from the database
 		assert.Eventually(t, func() bool {
-			finalLeases, err := queries.ListLeases(ctx, testRingID)
-			if err != nil {
-				return false
-			}
-			node2Count := 0
-			for _, lease := range finalLeases {
-				if lease.NodeID == node2.nodeID {
-					node2Count++
+			for _, position := range node2Positions {
+				lease, err := queries.GetLease(ctx, testRingID, position)
+				if err != nil || lease != nil {
+					return false
 				}
 			}
-			// Some cleanup should happen (not necessarily all 8 vnodes)
-			return node2Count < 8
-		}, 2*time.Second, 100*time.Millisecond, "some expired successor leases should be cleaned up")
+			return true
+		}, 2*time.Second, 100*time.Millisecond, "expired leases should be cleaned up")
 	})
 
 	t.Run("should redistribute partitions after node crash", func(t *testing.T) {

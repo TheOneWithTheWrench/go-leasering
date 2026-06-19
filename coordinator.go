@@ -25,7 +25,7 @@ func newCoordinator(ring *Ring, m *membership, store *leaseStore, opts options) 
 	}
 }
 
-// start begins the background processes: join, lease renewal, ring refresh, and proposal acceptance.
+// start begins the background processes: join, lease renewal, ring refresh, proposal acceptance, and cleanup.
 // This will block until the node successfully joins the ring.
 //
 // Context handling: The caller's context is used for the join phase. Background workers run
@@ -105,7 +105,7 @@ func (c *coordinator) start(ctx context.Context) error {
 	// Start remaining background workers
 	go c.renewLeaseWorker(workerCtx)
 	go c.refreshRingWorker(workerCtx)
-	go c.cleanupExpiredLeasesWorker(workerCtx)
+	go c.cleanupExpiredRecordsWorker(workerCtx)
 
 	return nil
 }
@@ -226,8 +226,8 @@ func (c *coordinator) acceptProposalsWorker(ctx context.Context) {
 	}
 }
 
-// cleanupExpiredLeasesWorker periodically checks for and removes expired leases of successors.
-func (c *coordinator) cleanupExpiredLeasesWorker(ctx context.Context) {
+// cleanupExpiredRecordsWorker periodically removes expired leases and proposals.
+func (c *coordinator) cleanupExpiredRecordsWorker(ctx context.Context) {
 	var ticker = time.NewTicker(c.options.refreshInterval)
 	defer ticker.Stop()
 
@@ -236,8 +236,8 @@ func (c *coordinator) cleanupExpiredLeasesWorker(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if err := c.membership.CleanupExpiredLeases(ctx); err != nil {
-				c.options.logger.Error("failed to cleanup expired leases", "error", err)
+			if err := c.membership.CleanupExpiredRecords(ctx); err != nil {
+				c.options.logger.Error("failed to cleanup expired records", "error", err)
 			}
 		}
 	}
