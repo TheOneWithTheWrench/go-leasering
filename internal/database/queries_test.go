@@ -398,7 +398,7 @@ WHERE schemaname = current_schema()
 		assert.Equal(t, existing.NodeID, retrieved.NodeID)
 	})
 
-	t.Run("should delete lease", func(t *testing.T) {
+	t.Run("should delete lease when owned by node", func(t *testing.T) {
 		// Arrange
 		var (
 			sut   = newDb(t)
@@ -410,7 +410,7 @@ WHERE schemaname = current_schema()
 		require.NoError(t, err)
 
 		// Act
-		err = sut.DeleteLease(ctx, "ring-1", 100)
+		err = sut.DeleteLeaseIfOwned(ctx, "ring-1", 100, "node-1")
 		require.NoError(t, err)
 
 		var retrieved, getErr = sut.GetLease(ctx, "ring-1", 100)
@@ -418,6 +418,29 @@ WHERE schemaname = current_schema()
 		// Assert
 		require.NoError(t, getErr)
 		assert.Nil(t, retrieved)
+	})
+
+	t.Run("should not delete lease owned by another node", func(t *testing.T) {
+		// Arrange
+		var (
+			sut   = newDb(t)
+			ctx   = newCtx()
+			lease = newLease("ring-1", 100, "node-new", 0)
+		)
+
+		err := sut.SetLease(ctx, lease)
+		require.NoError(t, err)
+
+		// Act
+		err = sut.DeleteLeaseIfOwned(ctx, "ring-1", 100, "node-old")
+		require.NoError(t, err)
+
+		var retrieved, getErr = sut.GetLease(ctx, "ring-1", 100)
+
+		// Assert
+		require.NoError(t, getErr)
+		require.NotNil(t, retrieved)
+		assert.Equal(t, "node-new", retrieved.NodeID)
 	})
 
 	t.Run("should delete expired leases for ring", func(t *testing.T) {

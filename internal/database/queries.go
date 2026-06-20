@@ -87,9 +87,11 @@ WHERE ring_id = $1
   AND vnode_idx = $4
   AND expires_at > NOW();`
 
-	deleteLeaseSQL = `
+	deleteLeaseIfOwnedSQL = `
 DELETE FROM %s_leases
-WHERE ring_id = $1 AND position = $2;`
+WHERE ring_id = $1
+  AND position = $2
+  AND node_id = $3;`
 
 	deleteExpiredLeasesSQL = `
 DELETE FROM %s_leases
@@ -241,10 +243,10 @@ func (q *Queries) RenewLease(ctx context.Context, lease *LeaseRecord) error {
 	return nil
 }
 
-// DeleteLease removes a lease by position.
-func (q *Queries) DeleteLease(ctx context.Context, ringID string, position int) error {
-	query := fmt.Sprintf(deleteLeaseSQL, q.tableName)
-	_, err := q.db.ExecContext(ctx, query, ringID, position)
+// DeleteLeaseIfOwned removes a lease only if it is still owned by nodeID.
+func (q *Queries) DeleteLeaseIfOwned(ctx context.Context, ringID string, position int, nodeID string) error {
+	query := fmt.Sprintf(deleteLeaseIfOwnedSQL, q.tableName)
+	_, err := q.db.ExecContext(ctx, query, ringID, position, nodeID)
 	if err != nil {
 		return fmt.Errorf("failed to delete lease: %w", err)
 	}

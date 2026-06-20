@@ -112,9 +112,9 @@ func (ls *leaseStore) InsertLeaseIfTargetOwned(ctx context.Context, lease *lease
 	return nil
 }
 
-// DeleteLease removes a lease from the database.
-func (ls *leaseStore) DeleteLease(ctx context.Context, position int) error {
-	if err := ls.queries.DeleteLease(ctx, ls.ringID, position); err != nil {
+// DeleteLeaseIfOwned removes a lease only if it is still owned by nodeID.
+func (ls *leaseStore) DeleteLeaseIfOwned(ctx context.Context, position int, nodeID string) error {
+	if err := ls.queries.DeleteLeaseIfOwned(ctx, ls.ringID, position, nodeID); err != nil {
 		return fmt.Errorf("failed to delete lease at position %d: %w", position, err)
 	}
 	return nil

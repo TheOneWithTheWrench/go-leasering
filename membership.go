@@ -247,7 +247,7 @@ func (m *membership) Leave(ctx context.Context) error {
 	positions := m.ring.getMyVNodePositions()
 
 	for _, position := range positions {
-		if err := m.store.DeleteLease(ctx, position); err != nil {
+		if err := m.store.DeleteLeaseIfOwned(ctx, position, m.nodeID); err != nil {
 			return fmt.Errorf("failed to delete lease at position %d: %w", position, err)
 		}
 	}
@@ -265,14 +265,8 @@ func (m *membership) CleanupNodeData(ctx context.Context) error {
 	}
 
 	for i, position := range positions {
-		lease, err := m.store.GetLease(ctx, position)
-		if err != nil {
-			return fmt.Errorf("failed to get lease at position %d: %w", position, err)
-		}
-		if lease != nil && lease.NodeID == m.nodeID {
-			if err := m.store.DeleteLease(ctx, position); err != nil {
-				return fmt.Errorf("failed to delete lease at position %d: %w", position, err)
-			}
+		if err := m.store.DeleteLeaseIfOwned(ctx, position, m.nodeID); err != nil {
+			return fmt.Errorf("failed to delete lease at position %d: %w", position, err)
 		}
 
 		_, ownerPos := m.ring.findHandoffBounds(position)

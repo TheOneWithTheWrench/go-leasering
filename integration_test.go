@@ -629,7 +629,7 @@ func TestIntegration(t *testing.T) {
 		leases, _ := queries.ListLeases(ctx, testRingID)
 		for _, lease := range leases {
 			if lease.NodeID == node2.nodeID {
-				err = queries.DeleteLease(ctx, testRingID, lease.Position)
+				err = queries.DeleteLeaseIfOwned(ctx, testRingID, lease.Position, node2.nodeID)
 				require.NoError(t, err)
 			}
 		}
