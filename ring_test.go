@@ -166,7 +166,7 @@ func TestRing(t *testing.T) {
 		assert.Equal(t, expectedCount, len(partitions))
 	})
 
-	t.Run("should find predecessor for position between vnodes", func(t *testing.T) {
+	t.Run("should find handoff bounds for position between vnodes", func(t *testing.T) {
 		// Arrange
 		var (
 			sut    = newRing()
@@ -179,13 +179,14 @@ func TestRing(t *testing.T) {
 
 		// Act
 		sut.rebuildFromLeases(leases)
-		var pred = sut.findPredecessor(600)
+		var predecessor, owner = sut.findHandoffBounds(600)
 
 		// Assert
-		assert.Equal(t, 500, pred)
+		assert.Equal(t, 500, predecessor)
+		assert.Equal(t, 900, owner)
 	})
 
-	t.Run("should find predecessor that wraps around", func(t *testing.T) {
+	t.Run("should find handoff bounds that wrap around", func(t *testing.T) {
 		// Arrange
 		var (
 			sut    = newRing()
@@ -198,13 +199,14 @@ func TestRing(t *testing.T) {
 
 		// Act
 		sut.rebuildFromLeases(leases)
-		var pred = sut.findPredecessor(50)
+		var predecessor, owner = sut.findHandoffBounds(50)
 
 		// Assert
-		assert.Equal(t, 900, pred)
+		assert.Equal(t, 900, predecessor)
+		assert.Equal(t, 100, owner)
 	})
 
-	t.Run("should find predecessor of exact vnode position", func(t *testing.T) {
+	t.Run("should find handoff bounds for exact vnode position", func(t *testing.T) {
 		// Arrange
 		var (
 			sut    = newRing()
@@ -217,21 +219,23 @@ func TestRing(t *testing.T) {
 
 		// Act
 		sut.rebuildFromLeases(leases)
-		var pred = sut.findPredecessor(500)
+		var predecessor, owner = sut.findHandoffBounds(500)
 
 		// Assert
-		assert.Equal(t, 100, pred)
+		assert.Equal(t, 100, predecessor)
+		assert.Equal(t, 500, owner)
 	})
 
-	t.Run("should return -1 for predecessor in empty ring", func(t *testing.T) {
+	t.Run("should return -1 bounds for empty ring", func(t *testing.T) {
 		// Arrange
 		var sut = newRing()
 
 		// Act
-		var pred = sut.findPredecessor(500)
+		var predecessor, owner = sut.findHandoffBounds(500)
 
 		// Assert
-		assert.Equal(t, -1, pred)
+		assert.Equal(t, -1, predecessor)
+		assert.Equal(t, -1, owner)
 	})
 
 	t.Run("should get my vnode positions", func(t *testing.T) {
@@ -276,55 +280,6 @@ func TestRing(t *testing.T) {
 			assert.GreaterOrEqual(t, pos, 0)
 			assert.Less(t, pos, sut.options.ringSize)
 		}
-	})
-
-	t.Run("should get successor position between vnodes", func(t *testing.T) {
-		// Arrange
-		var (
-			sut    = newRing()
-			leases = []*lease{
-				newLease(100, "node-1", 0),
-				newLease(500, "node-2", 0),
-				newLease(900, "node-3", 0),
-			}
-		)
-
-		// Act
-		sut.rebuildFromLeases(leases)
-		var succ = sut.getSuccessorPosition(200)
-
-		// Assert
-		assert.Equal(t, 500, succ)
-	})
-
-	t.Run("should get successor that wraps around", func(t *testing.T) {
-		// Arrange
-		var (
-			sut    = newRing()
-			leases = []*lease{
-				newLease(100, "node-1", 0),
-				newLease(500, "node-2", 0),
-				newLease(900, "node-3", 0),
-			}
-		)
-
-		// Act
-		sut.rebuildFromLeases(leases)
-		var succ = sut.getSuccessorPosition(950)
-
-		// Assert
-		assert.Equal(t, 100, succ)
-	})
-
-	t.Run("should return -1 for successor in empty ring", func(t *testing.T) {
-		// Arrange
-		var sut = newRing()
-
-		// Act
-		var succ = sut.getSuccessorPosition(500)
-
-		// Assert
-		assert.Equal(t, -1, succ)
 	})
 
 	t.Run("should get vnode at position when it exists", func(t *testing.T) {

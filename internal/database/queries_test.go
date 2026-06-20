@@ -279,7 +279,7 @@ WHERE schemaname = current_schema()
 		assert.Nil(t, retrieved)
 	})
 
-	t.Run("should insert lease when predecessor is actively owned by accepter", func(t *testing.T) {
+	t.Run("should insert lease when target is actively owned by accepter", func(t *testing.T) {
 		// Arrange
 		var (
 			sut         = newDb(t)
@@ -292,7 +292,7 @@ WHERE schemaname = current_schema()
 		require.NoError(t, err)
 
 		// Act
-		err = sut.InsertLeaseIfPredecessorOwned(ctx, lease, predecessor.Position, predecessor.NodeID)
+		err = sut.InsertLeaseIfTargetOwned(ctx, lease, predecessor.Position, predecessor.NodeID)
 		require.NoError(t, err)
 
 		var retrieved, getErr = sut.GetLease(ctx, "ring-1", 150)
@@ -304,7 +304,7 @@ WHERE schemaname = current_schema()
 		assert.Equal(t, lease.VNodeIdx, retrieved.VNodeIdx)
 	})
 
-	t.Run("should not insert lease when predecessor is expired", func(t *testing.T) {
+	t.Run("should not insert lease when target is expired", func(t *testing.T) {
 		// Arrange
 		var (
 			sut         = newDb(t)
@@ -318,7 +318,7 @@ WHERE schemaname = current_schema()
 		require.NoError(t, err)
 
 		// Act
-		err = sut.InsertLeaseIfPredecessorOwned(ctx, lease, predecessor.Position, predecessor.NodeID)
+		err = sut.InsertLeaseIfTargetOwned(ctx, lease, predecessor.Position, predecessor.NodeID)
 
 		var retrieved, getErr = sut.GetLease(ctx, "ring-1", 150)
 
@@ -328,7 +328,7 @@ WHERE schemaname = current_schema()
 		assert.Nil(t, retrieved)
 	})
 
-	t.Run("should not insert lease when predecessor is owned by another node", func(t *testing.T) {
+	t.Run("should not insert lease when target is owned by another node", func(t *testing.T) {
 		// Arrange
 		var (
 			sut         = newDb(t)
@@ -341,7 +341,7 @@ WHERE schemaname = current_schema()
 		require.NoError(t, err)
 
 		// Act
-		err = sut.InsertLeaseIfPredecessorOwned(ctx, lease, predecessor.Position, "node-3")
+		err = sut.InsertLeaseIfTargetOwned(ctx, lease, predecessor.Position, "node-3")
 
 		var retrieved, getErr = sut.GetLease(ctx, "ring-1", 150)
 
@@ -351,7 +351,7 @@ WHERE schemaname = current_schema()
 		assert.Nil(t, retrieved)
 	})
 
-	t.Run("should not insert lease when predecessor is missing", func(t *testing.T) {
+	t.Run("should not insert lease when target is missing", func(t *testing.T) {
 		// Arrange
 		var (
 			sut   = newDb(t)
@@ -360,7 +360,7 @@ WHERE schemaname = current_schema()
 		)
 
 		// Act
-		err := sut.InsertLeaseIfPredecessorOwned(ctx, lease, 100, "node-1")
+		err := sut.InsertLeaseIfTargetOwned(ctx, lease, 100, "node-1")
 
 		var retrieved, getErr = sut.GetLease(ctx, "ring-1", 150)
 
@@ -387,7 +387,7 @@ WHERE schemaname = current_schema()
 		require.NoError(t, err)
 
 		// Act
-		err = sut.InsertLeaseIfPredecessorOwned(ctx, lease, predecessor.Position, predecessor.NodeID)
+		err = sut.InsertLeaseIfTargetOwned(ctx, lease, predecessor.Position, predecessor.NodeID)
 
 		var retrieved, getErr = sut.GetLease(ctx, "ring-1", 150)
 

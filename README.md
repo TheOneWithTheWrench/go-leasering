@@ -8,6 +8,8 @@ A distributed consistent hashing ring implementation with lease-based coordinati
 
 `go-leasering` enables multiple nodes to coordinate partition ownership through a consistent hashing ring, using PostgreSQL as the coordination layer. Each node claims virtual nodes (vnodes) on the ring through time-limited leases, automatically distributing work across the cluster.
 
+The public API answers one question: "which partitions should this process own right now?" Callers periodically read `GetOwnedPartitions()` and process work for those partitions.
+
 ## Key Features
 
 - **Consistent Hashing** - Predictable partition distribution using virtual nodes
@@ -62,11 +64,63 @@ See `cmd/ringnode/README.md` for more details.
 
 ## How It Works
 
-1. **Join Protocol** - Nodes propose vnodes at deterministic hash positions
-2. **Lease Acceptance** - Existing nodes accept proposals and grant leases
-3. **Continuous Renewal** - Nodes periodically renew their leases
-4. **Ring Refresh** - Nodes read all leases to maintain consistent ring view
-5. **Failure Detection** - Nodes periodically remove expired leases and proposals from PostgreSQL
+The ring has a fixed partition space of `0..1023`. Each process owns one or more virtual nodes. A vnode is a point on the ring backed by a PostgreSQL lease.
+
+Example topology with two vnodes:
+
+```text
+Ring: example_ring
+Size: 1024 | Nodes: 2 | vnodes: 2
+
+Ring Topology:
+  A @ 100    owns (900..1023,0..100]
+  B @ 900    owns (100..900]
+```
+
+Ownership is defined as `(predecessor, self]`:
+
+- The vnode at `100` owns partitions after its predecessor up to and including `100`.
+- The vnode at `900` owns partitions after `100` up to and including `900`.
+- Wrap-around ranges continue through `1023` and then `0`.
+
+With virtual nodes, one physical process has multiple points on the ring. Its owned partitions are the union of the ranges owned by its vnodes.
+
+### Join Handoff
+
+When a new vnode joins at position `X`, two existing positions matter:
+
+```text
+Before:
+  A @ 100    owns (900..1023,0..100]
+  B @ 900    owns (100..900]
+
+New vnode:
+  X @ 300
+```
+
+Before `X` joins, `B` owns `(100,900]`, including `300`.
+
+After `X` joins:
+
+```text
+After:
+  A @ 100    owns (900..1023,0..100]
+  X @ 300    owns (100..300]
+  B @ 900    owns (300..900]
+```
+
+`A` is only the predecessor/range boundary. It is not the node giving up work.
+
+The current owner (`B`) must accept the join because it is the node that has to stop serving `(100,300]`. To preserve at-most-one ownership, the accepting node removes the transferred partitions from its local ownership before activating the new lease for `X`. This can create a short availability gap during handoff, but avoids two nodes processing the same partition.
+
+### Lifecycle
+
+1. **Bootstrap** - The first active node creates leases for its vnodes.
+2. **Join Proposal** - New nodes propose vnodes at deterministic hash positions.
+3. **Lease Acceptance** - The current owner of each proposed position accepts and activates the new lease.
+4. **Continuous Renewal** - Nodes periodically renew leases they still own.
+5. **Ring Refresh** - Nodes read active leases to refresh cached ownership.
+6. **Failure Detection** - Nodes periodically remove expired leases and proposals from PostgreSQL.
 
 ## Configuration Options
 
@@ -76,12 +130,12 @@ See `cmd/ringnode/README.md` for more details.
 | `WithLeaseTTL(d)` | 30s | Lease time-to-live. Renewal, refresh, and join timeout intervals are derived from this value. |
 | `WithLogger(logger)` | no-op logger | Logger used for ring lifecycle and worker errors. Passing `nil` restores the no-op logger. |
 
-The ring currently uses a fixed partition space of 1024 positions. Ring IDs must be valid PostgreSQL identifiers and short enough to leave room for generated table suffixes.
+Ring IDs must be valid PostgreSQL identifiers and short enough to leave room for generated table and index suffixes.
 
 ## Requirements
 
 - PostgreSQL 12+
-- Go 1.26+
+- Go 1.26.4+
 
 ## Troubleshooting
 
@@ -116,14 +170,7 @@ This library needs significant work before production readiness:
 - [ ] Document better how to use the API
 - [ ] Consider what options should actually be exposed to clients
 
-### Architecture Refactoring
-- [ ] Decouple business logic from Ring struct (too monolithic)
-- [ ] Separate concerns: coordination, state management, workers
-- [ ] Introduce cleaner interfaces for extensibility
-- [ ] Better separation between database and domain layers
-
 ### Observability & Metrics
-- [ ] Add structured logging (slog integration)
 - [ ] Expose Prometheus metrics (lease renewals, partition ownership, failures)
 - [ ] Tracing support for distributed operations
 - [ ] Health check endpoints

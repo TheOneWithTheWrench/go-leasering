@@ -237,27 +237,31 @@ func (r *Ring) partitionsInRange(start, end int) []int {
 	return partitions
 }
 
-// findPredecessor returns the counter-clockwise predecessor position for a given position.
-// Returns -1 if the ring is empty.
-func (r *Ring) findPredecessor(position int) int {
+// findHandoffBounds returns the lower range boundary and current owner for a joining position.
+// For a new vnode at position X, predecessor gives the range start and owner must accept the handoff.
+func (r *Ring) findHandoffBounds(position int) (predecessor int, owner int) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
 	if len(r.vnodes) == 0 {
-		return -1
+		return -1, -1
 	}
 
-	// Binary search for the first vnode with position >= target
 	idx := sort.Search(len(r.vnodes), func(i int) bool {
 		return r.vnodes[i].Position >= position
 	})
 
-	// Counter-clockwise predecessor is the previous index
-	if idx == 0 {
-		// Wrap around to last vnode
-		return r.vnodes[len(r.vnodes)-1].Position
+	predecessorIdx := idx - 1
+	if predecessorIdx < 0 {
+		predecessorIdx = len(r.vnodes) - 1
 	}
-	return r.vnodes[idx-1].Position
+
+	ownerIdx := idx
+	if ownerIdx >= len(r.vnodes) {
+		ownerIdx = 0
+	}
+
+	return r.vnodes[predecessorIdx].Position, r.vnodes[ownerIdx].Position
 }
 
 // getMyVNodePositions returns all vnode positions that this node should own.
@@ -283,40 +287,18 @@ func (r *Ring) hasSelfCollision() bool {
 	return false
 }
 
-// getMyPositions returns a map of all positions owned by this node.
-func (r *Ring) getMyPositions() map[int]bool {
+// getMyPositions returns all vnode positions owned by this node.
+func (r *Ring) getMyPositions() []int {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	var myPositions = make(map[int]bool)
+	var myPositions []int
 	for _, vnode := range r.vnodes {
 		if vnode.NodeID == r.nodeID {
-			myPositions[vnode.Position] = true
+			myPositions = append(myPositions, vnode.Position)
 		}
 	}
 	return myPositions
-}
-
-// getSuccessorPosition returns the next vnode position after the given position.
-// Returns -1 if ring is empty.
-func (r *Ring) getSuccessorPosition(position int) int {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-
-	if len(r.vnodes) == 0 {
-		return -1
-	}
-
-	// Binary search for the first vnode with position > target
-	idx := sort.Search(len(r.vnodes), func(i int) bool {
-		return r.vnodes[i].Position > position
-	})
-
-	// Wrap around if needed
-	if idx >= len(r.vnodes) {
-		return r.vnodes[0].Position
-	}
-	return r.vnodes[idx].Position
 }
 
 // getVNodeAtPosition returns the vnode at the given position, if it exists.
@@ -352,6 +334,24 @@ func (r *Ring) clearOwnedPartitions() {
 	defer r.mu.Unlock()
 
 	r.ownedPartitions = []int{}
+}
+
+func (r *Ring) removeOwnedPartitionsInRange(start, end int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	removed := make(map[int]bool)
+	for _, partition := range r.partitionsInRange(start, end) {
+		removed[partition] = true
+	}
+
+	partitions := make([]int, 0, len(r.ownedPartitions))
+	for _, partition := range r.ownedPartitions {
+		if !removed[partition] {
+			partitions = append(partitions, partition)
+		}
+	}
+	r.ownedPartitions = partitions
 }
 
 // String returns a visual representation of the ring state.

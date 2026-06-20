@@ -34,10 +34,13 @@ func (m *membership) ProposeJoin(ctx context.Context) error {
 		return fmt.Errorf("failed to refresh ring state: %w", err)
 	}
 
+	// For all the positions, we have to find who's currently
+	// owning them and propose a take-over
 	for i, position := range positions {
-		predecessorPos := m.ring.findPredecessor(position)
+		_, ownerPos := m.ring.findHandoffBounds(position)
 
-		if predecessorPos == -1 {
+		// If noone owns it, we "force" ourselves onto the position
+		if ownerPos == -1 {
 			lease := &lease{
 				Position:  position,
 				NodeID:    m.nodeID,
@@ -51,7 +54,7 @@ func (m *membership) ProposeJoin(ctx context.Context) error {
 		}
 
 		proposal := &proposal{
-			PredecessorPos: predecessorPos,
+			PredecessorPos: ownerPos,
 			NewNodeID:      m.nodeID,
 			NewVNodeIdx:    i,
 			ProposedPos:    position,
@@ -69,11 +72,13 @@ func (m *membership) ProposeJoin(ctx context.Context) error {
 // AcceptProposals scans for proposals targeting this node's vnodes and accepts them.
 func (m *membership) AcceptProposals(ctx context.Context) error {
 	myPositions := m.ring.getMyPositions()
+
+	// If we own nothing, we can accept nothing.
 	if len(myPositions) == 0 {
 		return nil
 	}
 
-	allProposals, err := m.store.ListProposalsForPredecessors(ctx, positionMapKeys(myPositions))
+	allProposals, err := m.store.ListProposalsForPredecessors(ctx, myPositions)
 	if err != nil {
 		return fmt.Errorf("failed to list proposals for predecessors: %w", err)
 	}
@@ -84,7 +89,7 @@ func (m *membership) AcceptProposals(ctx context.Context) error {
 	}
 
 	acceptedAny := false
-	for position := range myPositions {
+	for _, position := range myPositions {
 		proposals := proposalsByPred[position]
 		if len(proposals) == 0 {
 			continue
@@ -100,7 +105,17 @@ func (m *membership) AcceptProposals(ctx context.Context) error {
 				continue
 			}
 
-			winner := winningProposal(posProposals)
+			var (
+				winner                       = winningProposal(posProposals)
+				targetOwnerPos               = winner.PredecessorPos
+				previousOwnerStart, ownerPos = m.ring.findHandoffBounds(winner.ProposedPos)
+			)
+			if ownerPos != targetOwnerPos || ownerPos == winner.ProposedPos {
+				if err := m.deleteProposals(ctx, posProposals); err != nil {
+					return fmt.Errorf("failed to delete rejected proposal: %w", err)
+				}
+				continue
+			}
 
 			var (
 				leaseTTL = time.Now().Add(m.leaseTTL)
@@ -112,8 +127,13 @@ func (m *membership) AcceptProposals(ctx context.Context) error {
 				}
 			)
 
-			insertErr := m.store.InsertLeaseIfPredecessorOwned(ctx, lease, winner.PredecessorPos, m.nodeID)
+			m.ring.removeOwnedPartitionsInRange(previousOwnerStart, winner.ProposedPos)
+
+			insertErr := m.store.InsertLeaseIfTargetOwned(ctx, lease, targetOwnerPos, m.nodeID)
 			if insertErr != nil {
+				if refreshErr := m.RefreshRingState(ctx); refreshErr != nil {
+					return fmt.Errorf("failed to refresh ring state after rejected proposal: %w", refreshErr)
+				}
 				if err := m.deleteProposals(ctx, posProposals); err != nil {
 					return fmt.Errorf("failed to delete rejected proposal: %w", err)
 				}
@@ -255,9 +275,9 @@ func (m *membership) CleanupNodeData(ctx context.Context) error {
 			}
 		}
 
-		predecessorPos := m.ring.findPredecessor(position)
-		if predecessorPos != -1 {
-			_ = m.store.DeleteProposal(ctx, predecessorPos, m.nodeID, i)
+		_, ownerPos := m.ring.findHandoffBounds(position)
+		if ownerPos != -1 {
+			_ = m.store.DeleteProposal(ctx, ownerPos, m.nodeID, i)
 		}
 	}
 
@@ -272,12 +292,4 @@ func winningProposal(proposals []*proposal) *proposal {
 		}
 	}
 	return winner
-}
-
-func positionMapKeys(positions map[int]bool) []int {
-	var keys = make([]int, 0, len(positions))
-	for position := range positions {
-		keys = append(keys, position)
-	}
-	return keys
 }

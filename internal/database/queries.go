@@ -66,7 +66,7 @@ DO UPDATE SET
 INSERT INTO %s_leases (ring_id, position, node_id, vnode_idx, expires_at)
 VALUES ($1, $2, $3, $4, $5);`
 
-	insertLeaseIfPredecessorOwnedSQL = `
+	insertLeaseIfTargetOwnedSQL = `
 INSERT INTO %s_leases (ring_id, position, node_id, vnode_idx, expires_at)
 SELECT $1::varchar, $2::integer, $3::varchar, $4::integer, $5::timestamptz
 WHERE EXISTS (
@@ -197,14 +197,14 @@ func (q *Queries) InsertLease(ctx context.Context, lease *LeaseRecord) error {
 	return nil
 }
 
-// InsertLeaseIfPredecessorOwned inserts a lease only if the accepter still owns an active predecessor lease.
-func (q *Queries) InsertLeaseIfPredecessorOwned(ctx context.Context, lease *LeaseRecord, predecessorPos int, accepterNodeID string) error {
-	query := fmt.Sprintf(insertLeaseIfPredecessorOwnedSQL, q.tableName, q.tableName)
+// InsertLeaseIfTargetOwned inserts a lease only if the accepter still owns an active target lease.
+func (q *Queries) InsertLeaseIfTargetOwned(ctx context.Context, lease *LeaseRecord, targetPos int, accepterNodeID string) error {
+	query := fmt.Sprintf(insertLeaseIfTargetOwnedSQL, q.tableName, q.tableName)
 	result, err := q.db.ExecContext(ctx, query,
-		lease.RingID, lease.Position, lease.NodeID, lease.VNodeIdx, lease.ExpiresAt, predecessorPos, accepterNodeID,
+		lease.RingID, lease.Position, lease.NodeID, lease.VNodeIdx, lease.ExpiresAt, targetPos, accepterNodeID,
 	)
 	if err != nil {
-		return fmt.Errorf("failed to insert lease if predecessor owned: %w", err)
+		return fmt.Errorf("failed to insert lease if target owned: %w", err)
 	}
 
 	rowsAffected, err := result.RowsAffected()
@@ -213,7 +213,7 @@ func (q *Queries) InsertLeaseIfPredecessorOwned(ctx context.Context, lease *Leas
 	}
 
 	if rowsAffected != 1 {
-		return fmt.Errorf("%w: predecessor position %d", ErrLeaseNotInserted, predecessorPos)
+		return fmt.Errorf("%w: target position %d", ErrLeaseNotInserted, targetPos)
 	}
 
 	return nil
