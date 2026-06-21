@@ -600,7 +600,7 @@ func TestIntegration(t *testing.T) {
 		}, 2*time.Second, 50*time.Millisecond, "partitions should be cleared when heartbeat fails")
 	})
 
-	t.Run("should re-join ring after being evicted", func(t *testing.T) {
+	t.Run("should re-join ring after losing one vnode lease", func(t *testing.T) {
 		t.Parallel()
 
 		var (
@@ -625,33 +625,38 @@ func TestIntegration(t *testing.T) {
 			return len(node1.GetOwnedPartitions()) > 0 && len(node2.GetOwnedPartitions()) > 0
 		}, 2*time.Second, 50*time.Millisecond, "both nodes should own partitions")
 
-		// Delete node2's leases (simulating eviction by other nodes)
+		// Delete one of node2's leases (simulating partial lease loss)
 		leases, _ := queries.ListLeases(ctx, testRingID)
+		deletedOne := false
 		for _, lease := range leases {
 			if lease.NodeID == node2.nodeID {
 				err = queries.DeleteLeaseIfOwned(ctx, testRingID, lease.Position, node2.nodeID)
 				require.NoError(t, err)
+				deletedOne = true
+				break
 			}
 		}
+		require.True(t, deletedOne)
 
-		// Node2 should detect eviction on next refresh and re-propose join
+		// Node2 should detect the missing vnode on next refresh and re-propose join.
 		assert.Eventually(t, func() bool {
 			leases, err := queries.ListLeases(ctx, testRingID)
 			if err != nil {
 				return false
 			}
 
+			leaseCount := 0
 			for _, lease := range leases {
 				if lease.NodeID == node2.nodeID {
-					return true
+					leaseCount++
 				}
 			}
-			return false
-		}, 5*time.Second, 100*time.Millisecond, "node2 should re-join after eviction")
+			return leaseCount == node2.options.vnodeCount
+		}, 5*time.Second, 100*time.Millisecond, "node2 should restore all vnode leases after partial lease loss")
 
 		// Node2 should eventually own partitions again
 		assert.Eventually(t, func() bool {
 			return len(node2.GetOwnedPartitions()) > 0
-		}, 5*time.Second, 100*time.Millisecond, "node2 should own partitions after re-join")
+		}, 5*time.Second, 100*time.Millisecond, "node2 should own partitions after restoring missing lease")
 	})
 }

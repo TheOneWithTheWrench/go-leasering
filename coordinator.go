@@ -181,24 +181,21 @@ func (c *coordinator) refreshRingWorker(ctx context.Context) {
 				continue
 			}
 
-			// Check if we've been evicted from the ring
-			// A node is evicted if it has no partitions after a successful refresh
-			evicted, err := c.membership.CheckIfEvicted(ctx)
+			missingLeases, err := c.membership.CheckIfMissingLeases(ctx)
 			if err != nil {
-				c.options.logger.Error("failed to check eviction status", "error", err)
+				c.options.logger.Error("failed to check lease status", "error", err)
 				continue
 			}
 
-			if evicted {
-				c.options.logger.Warn("detected eviction from ring, attempting to re-join")
+			if missingLeases {
+				c.options.logger.Warn("detected missing leases, attempting to re-join")
 
-				// Try to re-join via proposal protocol
 				if err := c.membership.ProposeJoin(ctx); err != nil {
-					c.options.logger.Error("failed to re-propose join after eviction", "error", err)
+					c.options.logger.Error("failed to re-propose join after missing leases", "error", err)
 					continue
 				}
 
-				c.options.logger.Info("submitted re-join proposals after eviction")
+				c.options.logger.Info("submitted re-join proposals after missing leases")
 			}
 		}
 	}
