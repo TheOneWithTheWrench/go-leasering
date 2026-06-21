@@ -5,7 +5,7 @@ A command-line demonstration of the go-lease-ring library. Run multiple instance
 ## Prerequisites
 
 - Docker and Docker Compose (for test database)
-- Go 1.24+
+- Go 1.26.4+
 
 ## Quick Start
 
@@ -51,7 +51,7 @@ make db-down
 |------|---------|-------------|
 | `--ring-id` | `demo_ring` | Ring identifier (all nodes must use same ring-id). Must contain only lowercase letters, numbers, and underscores, starting with a letter. |
 | `--vnodes` | `8` | Number of virtual nodes per physical node |
-| `--lease-ttl` | `10s` | How long leases last before expiring |
+| `--lease-ttl` | `15s` | How long leases last before expiring |
 | `--db` | `postgres://testuser:testpassword@localhost:5432/leasering_test_db?sslmode=disable` | PostgreSQL connection URL |
 
 **Note:** Node IDs are automatically generated (e.g., `node_abc123`). You don't need to specify them.

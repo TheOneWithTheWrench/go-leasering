@@ -28,7 +28,7 @@ ring := leasering.NewRingNode(
     db,                  // PostgreSQL connection
     "my_ring",           // Ring ID (must be valid PostgreSQL identifier)
     leasering.WithVNodeCount(8),
-    leasering.WithLeaseTTL(30*time.Second),
+    leasering.WithLeaseTTL(15*time.Second),
 )
 
 // Join the ring
@@ -127,7 +127,7 @@ The current owner (`B`) must accept the join because it is the node that has to 
 | Option | Default | Description |
 |--------|---------|-------------|
 | `WithVNodeCount(n)` | 8 | Virtual nodes per physical node |
-| `WithLeaseTTL(d)` | 30s | Lease time-to-live. Renewal, refresh, and join timeout intervals are derived from this value. |
+| `WithLeaseTTL(d)` | 15s | Lease time-to-live. Renewal, refresh, and join timeout intervals are derived from this value. |
 | `WithLogger(logger)` | no-op logger | Logger used for ring lifecycle and worker errors. Passing `nil` restores the no-op logger. |
 
 Ring IDs must be valid PostgreSQL identifiers and short enough to leave room for generated table and index suffixes.

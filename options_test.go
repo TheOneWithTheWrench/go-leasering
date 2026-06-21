@@ -13,11 +13,11 @@ func TestOptions(t *testing.T) {
 		opts := defaultOptions()
 
 		// Assert
-		assert.Equal(t, 30*time.Second, opts.leaseTTL)
-		assert.Equal(t, 10*time.Second, opts.renewalInterval)
-		assert.Equal(t, 15*time.Second, opts.refreshInterval)
-		assert.Equal(t, 30*time.Second, opts.proposalTTL)
-		assert.Equal(t, 45*time.Second, opts.joinTimeout)
+		assert.Equal(t, 15*time.Second, opts.leaseTTL)
+		assert.Equal(t, 5*time.Second, opts.renewalInterval)
+		assert.Equal(t, 7500*time.Millisecond, opts.refreshInterval)
+		assert.Equal(t, 15*time.Second, opts.proposalTTL)
+		assert.Equal(t, 22500*time.Millisecond, opts.joinTimeout)
 	})
 
 	t.Run("should derive timing options from custom lease ttl", func(t *testing.T) {

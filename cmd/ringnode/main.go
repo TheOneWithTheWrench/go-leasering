@@ -36,7 +36,7 @@ coordinating with other nodes to distribute partitions across the cluster.`,
 
 	rootCmd.Flags().StringVar(&ringID, "ring-id", "demo_ring", "Ring identifier")
 	rootCmd.Flags().IntVar(&vnodeCount, "vnodes", 8, "Number of virtual nodes")
-	rootCmd.Flags().DurationVar(&leaseTTL, "lease-ttl", 30*time.Second, "Lease time-to-live duration")
+	rootCmd.Flags().DurationVar(&leaseTTL, "lease-ttl", 15*time.Second, "Lease time-to-live duration")
 	rootCmd.Flags().StringVar(&dbURL, "db", "postgres://testuser:testpassword@localhost:5432/leasering_test_db?sslmode=disable", "PostgreSQL connection URL")
 
 	if err := rootCmd.Execute(); err != nil {
