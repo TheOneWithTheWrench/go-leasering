@@ -1,8 +1,11 @@
 package database
 
 import (
+	"bytes"
 	"database/sql"
+	"embed"
 	"fmt"
+	"text/template"
 )
 
 const (
@@ -12,38 +15,34 @@ const (
 	MaxRingIDLength      = MaxIdentifierLength - len(ProposalsTableSuffix)
 )
 
-var (
-	createLeasesTableSQL = `
-CREATE TABLE IF NOT EXISTS %s_leases (
-    ring_id       VARCHAR       NOT NULL,
-    position      INTEGER       NOT NULL,
-    node_id       VARCHAR       NOT NULL,
-    vnode_idx     INTEGER       NOT NULL,
-    expires_at    TIMESTAMPTZ   NOT NULL,
+//go:embed migrations/*.sql.tmpl
+var migrationTemplateFiles embed.FS
 
-    PRIMARY KEY (ring_id, position)
-);`
+var migrationTemplates = template.Must(template.ParseFS(migrationTemplateFiles, "migrations/*.sql.tmpl"))
 
-	createProposalsTableSQL = `
-CREATE TABLE IF NOT EXISTS %s_proposals (
-    ring_id           VARCHAR       NOT NULL,
-    predecessor_pos   INTEGER       NOT NULL,
-    new_node_id       VARCHAR       NOT NULL,
-    new_vnode_idx     INTEGER       NOT NULL,
-    proposed_pos      INTEGER       NOT NULL,
-    expires_at        TIMESTAMPTZ   NOT NULL,
+type migrationTemplateData struct {
+	LeasesTable           string
+	ProposalsTable        string
+	LeasesActiveIndex     string
+	ProposalsExpiresIndex string
+}
 
-    PRIMARY KEY (ring_id, predecessor_pos, new_node_id, new_vnode_idx)
-);`
+func newMigrationTemplateData(tableName string) migrationTemplateData {
+	return migrationTemplateData{
+		LeasesTable:           tableName + LeasesTableSuffix,
+		ProposalsTable:        tableName + ProposalsTableSuffix,
+		LeasesActiveIndex:     tableName + "_leases_active_idx",
+		ProposalsExpiresIndex: tableName + "_proposals_expires_idx",
+	}
+}
 
-	createLeasesActiveIndexSQL = `
-CREATE INDEX IF NOT EXISTS %s_leases_active_idx
-ON %s_leases (ring_id, position, expires_at);`
-
-	createProposalsExpiresIndexSQL = `
-CREATE INDEX IF NOT EXISTS %s_proposals_expires_idx
-ON %s_proposals (ring_id, expires_at);`
-)
+func renderMigrationTemplate(name string, tableName string) (string, error) {
+	var buf bytes.Buffer
+	if err := migrationTemplates.ExecuteTemplate(&buf, name, newMigrationTemplateData(tableName)); err != nil {
+		return "", fmt.Errorf("failed to render migration template %q: %w", name, err)
+	}
+	return buf.String(), nil
+}
 
 // Migrate creates the leases and proposals tables.
 func Migrate(db *sql.DB, tableName string) error {
@@ -63,7 +62,10 @@ func Migrate(db *sql.DB, tableName string) error {
 }
 
 func createLeasesTable(db *sql.DB, tableName string) error {
-	var query = fmt.Sprintf(createLeasesTableSQL, tableName)
+	query, err := renderMigrationTemplate("createLeasesTable", tableName)
+	if err != nil {
+		return err
+	}
 	if _, err := db.Exec(query); err != nil {
 		return fmt.Errorf("failed to create leases table: %w", err)
 	}
@@ -71,7 +73,10 @@ func createLeasesTable(db *sql.DB, tableName string) error {
 }
 
 func createProposalsTable(db *sql.DB, tableName string) error {
-	var query = fmt.Sprintf(createProposalsTableSQL, tableName)
+	query, err := renderMigrationTemplate("createProposalsTable", tableName)
+	if err != nil {
+		return err
+	}
 	if _, err := db.Exec(query); err != nil {
 		return fmt.Errorf("failed to create proposals table: %w", err)
 	}
@@ -79,12 +84,16 @@ func createProposalsTable(db *sql.DB, tableName string) error {
 }
 
 func createIndexes(db *sql.DB, tableName string) error {
-	var queries = []string{
-		fmt.Sprintf(createLeasesActiveIndexSQL, tableName, tableName),
-		fmt.Sprintf(createProposalsExpiresIndexSQL, tableName, tableName),
+	var templates = []string{
+		"createLeasesActiveIndex",
+		"createProposalsExpiresIndex",
 	}
 
-	for _, query := range queries {
+	for _, tmpl := range templates {
+		query, err := renderMigrationTemplate(tmpl, tableName)
+		if err != nil {
+			return err
+		}
 		if _, err := db.Exec(query); err != nil {
 			return fmt.Errorf("failed to create indexes: %w", err)
 		}

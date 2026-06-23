@@ -1,11 +1,14 @@
 package database
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
+	"embed"
 	"errors"
 	"fmt"
 	"strings"
+	"text/template"
 )
 
 var (
@@ -26,6 +29,17 @@ func closeRows(rows *sql.Rows, err *error) {
 	}
 }
 
+//go:embed queries/*.sql.tmpl
+var queryTemplateFiles embed.FS
+
+var queryTemplates = template.Must(template.ParseFS(queryTemplateFiles, "queries/*.sql.tmpl"))
+
+type queryTemplateData struct {
+	LeasesTable          string
+	ProposalsTable       string
+	PositionPlaceholders string
+}
+
 // Queries provides table-aware database operations.
 type Queries struct {
 	db        DBTX
@@ -40,113 +54,33 @@ func NewQueries(db DBTX, tableName string) *Queries {
 	}
 }
 
-var (
-	listActiveLeasesSQL = `
-SELECT ring_id, position, node_id, vnode_idx, expires_at
-FROM %s_leases
-WHERE ring_id = $1
-  AND expires_at > NOW()
-ORDER BY position ASC;`
+func (q *Queries) renderQuery(name string, positionPlaceholders string) (string, error) {
+	var (
+		buf  bytes.Buffer
+		data = queryTemplateData{
+			LeasesTable:          q.tableName + LeasesTableSuffix,
+			ProposalsTable:       q.tableName + ProposalsTableSuffix,
+			PositionPlaceholders: positionPlaceholders,
+		}
+	)
 
-	getLeaseSQL = `
-SELECT ring_id, position, node_id, vnode_idx, expires_at
-FROM %s_leases
-WHERE ring_id = $1 AND position = $2;`
+	if err := queryTemplates.ExecuteTemplate(&buf, name, data); err != nil {
+		return "", fmt.Errorf("failed to render query %q: %w", name, err)
+	}
 
-	getActiveLeasesSQL = `
-SELECT ring_id, position, node_id, vnode_idx, expires_at
-FROM %s_leases
-WHERE ring_id = $1
-  AND position IN (%s)
-  AND expires_at > NOW();`
-
-	setLeaseSQL = `
-INSERT INTO %s_leases (ring_id, position, node_id, vnode_idx, expires_at)
-VALUES ($1, $2, $3, $4, $5)
-ON CONFLICT (ring_id, position)
-DO UPDATE SET
-    node_id = EXCLUDED.node_id,
-    vnode_idx = EXCLUDED.vnode_idx,
-    expires_at = EXCLUDED.expires_at;`
-
-	insertLeaseSQL = `
-INSERT INTO %s_leases (ring_id, position, node_id, vnode_idx, expires_at)
-VALUES ($1, $2, $3, $4, $5);`
-
-	insertLeaseIfTargetOwnedSQL = `
-INSERT INTO %s_leases (ring_id, position, node_id, vnode_idx, expires_at)
-SELECT $1::varchar, $2::integer, $3::varchar, $4::integer, $5::timestamptz
-WHERE EXISTS (
-    SELECT 1
-    FROM %s_leases
-    WHERE ring_id = $1
-      AND position = $6
-      AND node_id = $7
-      AND expires_at > NOW()
-)
-ON CONFLICT (ring_id, position)
-DO UPDATE SET
-    node_id = EXCLUDED.node_id,
-    vnode_idx = EXCLUDED.vnode_idx,
-    expires_at = EXCLUDED.expires_at
-WHERE %s_leases.expires_at <= NOW();`
-
-	renewLeaseSQL = `
-UPDATE %s_leases
-SET expires_at = $5
-WHERE ring_id = $1
-  AND position = $2
-  AND node_id = $3
-  AND vnode_idx = $4
-  AND expires_at > NOW();`
-
-	deleteLeaseIfOwnedSQL = `
-DELETE FROM %s_leases
-WHERE ring_id = $1
-  AND position = $2
-  AND node_id = $3;`
-
-	deleteExpiredLeasesSQL = `
-DELETE FROM %s_leases
-WHERE ring_id = $1
-  AND expires_at <= NOW();`
-
-	getProposalsSQL = `
-SELECT ring_id, predecessor_pos, new_node_id, new_vnode_idx, proposed_pos, expires_at
-FROM %s_proposals
-WHERE ring_id = $1 AND predecessor_pos = $2;`
-
-	getProposalsForPredecessorsSQL = `
-SELECT ring_id, predecessor_pos, new_node_id, new_vnode_idx, proposed_pos, expires_at
-FROM %s_proposals
-WHERE ring_id = $1
-  AND predecessor_pos IN (%s)
-  AND expires_at > NOW();`
-
-	setProposalSQL = `
-INSERT INTO %s_proposals (ring_id, predecessor_pos, new_node_id, new_vnode_idx, proposed_pos, expires_at)
-VALUES ($1, $2, $3, $4, $5, $6)
-ON CONFLICT (ring_id, predecessor_pos, new_node_id, new_vnode_idx)
-DO UPDATE SET
-    proposed_pos = EXCLUDED.proposed_pos,
-    expires_at = EXCLUDED.expires_at;`
-
-	deleteProposalSQL = `
-DELETE FROM %s_proposals
-WHERE ring_id = $1 AND predecessor_pos = $2 AND new_node_id = $3 AND new_vnode_idx = $4;`
-
-	deleteExpiredProposalsSQL = `
-DELETE FROM %s_proposals
-WHERE ring_id = $1
-  AND expires_at <= NOW();`
-)
+	return buf.String(), nil
+}
 
 // ListLeases returns all active leases for a ring, ordered by position.
 func (q *Queries) ListLeases(ctx context.Context, ringID string) (leases []*LeaseRecord, err error) {
 	var (
-		query = fmt.Sprintf(listActiveLeasesSQL, q.tableName)
+		query string
 		rows  *sql.Rows
 	)
+	query, err = q.renderQuery("listActiveLeases", "")
+	if err != nil {
+		return nil, err
+	}
 	rows, err = q.db.QueryContext(ctx, query, ringID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list leases: %w", err)
@@ -170,18 +104,22 @@ func (q *Queries) ListLeases(ctx context.Context, ringID string) (leases []*Leas
 
 // GetLease retrieves a single lease by position.
 func (q *Queries) GetLease(ctx context.Context, ringID string, position int) (*LeaseRecord, error) {
+	query, err := q.renderQuery("getLease", "")
+	if err != nil {
+		return nil, err
+	}
+
 	var (
-		query = fmt.Sprintf(getLeaseSQL, q.tableName)
-		lease LeaseRecord
-		err   = q.db.QueryRowContext(ctx, query, ringID, position).Scan(
+		lease   LeaseRecord
+		scanErr = q.db.QueryRowContext(ctx, query, ringID, position).Scan(
 			&lease.RingID, &lease.Position, &lease.NodeID, &lease.VNodeIdx, &lease.ExpiresAt,
 		)
 	)
-	if err == sql.ErrNoRows {
+	if scanErr == sql.ErrNoRows {
 		return nil, nil
 	}
-	if err != nil {
-		return nil, fmt.Errorf("failed to get lease: %w", err)
+	if scanErr != nil {
+		return nil, fmt.Errorf("failed to get lease: %w", scanErr)
 	}
 
 	return &lease, nil
@@ -204,10 +142,11 @@ func (q *Queries) GetActiveLeases(ctx context.Context, ringID string, positions 
 		args = append(args, position)
 	}
 
-	var (
-		query = fmt.Sprintf(getActiveLeasesSQL, q.tableName, strings.Join(placeholders, ", "))
-		rows  *sql.Rows
-	)
+	var rows *sql.Rows
+	query, err := q.renderQuery("getActiveLeases", strings.Join(placeholders, ", "))
+	if err != nil {
+		return nil, err
+	}
 	rows, err = q.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get active leases: %w", err)
@@ -231,8 +170,12 @@ func (q *Queries) GetActiveLeases(ctx context.Context, ringID string, positions 
 
 // SetLease inserts or updates a lease.
 func (q *Queries) SetLease(ctx context.Context, lease *LeaseRecord) error {
-	query := fmt.Sprintf(setLeaseSQL, q.tableName)
-	_, err := q.db.ExecContext(ctx, query,
+	query, err := q.renderQuery("setLease", "")
+	if err != nil {
+		return err
+	}
+
+	_, err = q.db.ExecContext(ctx, query,
 		lease.RingID, lease.Position, lease.NodeID, lease.VNodeIdx, lease.ExpiresAt,
 	)
 	if err != nil {
@@ -244,8 +187,12 @@ func (q *Queries) SetLease(ctx context.Context, lease *LeaseRecord) error {
 // InsertLease inserts a new lease. Returns error if a lease already exists at this position.
 // This is used when accepting proposals to ensure atomic claim of a position.
 func (q *Queries) InsertLease(ctx context.Context, lease *LeaseRecord) error {
-	query := fmt.Sprintf(insertLeaseSQL, q.tableName)
-	_, err := q.db.ExecContext(ctx, query,
+	query, err := q.renderQuery("insertLease", "")
+	if err != nil {
+		return err
+	}
+
+	_, err = q.db.ExecContext(ctx, query,
 		lease.RingID, lease.Position, lease.NodeID, lease.VNodeIdx, lease.ExpiresAt,
 	)
 	if err != nil {
@@ -256,7 +203,11 @@ func (q *Queries) InsertLease(ctx context.Context, lease *LeaseRecord) error {
 
 // InsertLeaseIfTargetOwned inserts a lease only if the accepter still owns an active target lease.
 func (q *Queries) InsertLeaseIfTargetOwned(ctx context.Context, lease *LeaseRecord, targetPos int, accepterNodeID string) error {
-	query := fmt.Sprintf(insertLeaseIfTargetOwnedSQL, q.tableName, q.tableName, q.tableName)
+	query, err := q.renderQuery("insertLeaseIfTargetOwned", "")
+	if err != nil {
+		return err
+	}
+
 	result, err := q.db.ExecContext(ctx, query,
 		lease.RingID, lease.Position, lease.NodeID, lease.VNodeIdx, lease.ExpiresAt, targetPos, accepterNodeID,
 	)
@@ -278,7 +229,11 @@ func (q *Queries) InsertLeaseIfTargetOwned(ctx context.Context, lease *LeaseReco
 
 // RenewLease extends an existing lease only if the same node still owns it and it has not expired.
 func (q *Queries) RenewLease(ctx context.Context, lease *LeaseRecord) error {
-	query := fmt.Sprintf(renewLeaseSQL, q.tableName)
+	query, err := q.renderQuery("renewLease", "")
+	if err != nil {
+		return err
+	}
+
 	result, err := q.db.ExecContext(ctx, query,
 		lease.RingID, lease.Position, lease.NodeID, lease.VNodeIdx, lease.ExpiresAt,
 	)
@@ -300,8 +255,12 @@ func (q *Queries) RenewLease(ctx context.Context, lease *LeaseRecord) error {
 
 // DeleteLeaseIfOwned removes a lease only if it is still owned by nodeID.
 func (q *Queries) DeleteLeaseIfOwned(ctx context.Context, ringID string, position int, nodeID string) error {
-	query := fmt.Sprintf(deleteLeaseIfOwnedSQL, q.tableName)
-	_, err := q.db.ExecContext(ctx, query, ringID, position, nodeID)
+	query, err := q.renderQuery("deleteLeaseIfOwned", "")
+	if err != nil {
+		return err
+	}
+
+	_, err = q.db.ExecContext(ctx, query, ringID, position, nodeID)
 	if err != nil {
 		return fmt.Errorf("failed to delete lease: %w", err)
 	}
@@ -310,8 +269,12 @@ func (q *Queries) DeleteLeaseIfOwned(ctx context.Context, ringID string, positio
 
 // DeleteExpiredLeases removes all expired leases for a ring.
 func (q *Queries) DeleteExpiredLeases(ctx context.Context, ringID string) error {
-	query := fmt.Sprintf(deleteExpiredLeasesSQL, q.tableName)
-	_, err := q.db.ExecContext(ctx, query, ringID)
+	query, err := q.renderQuery("deleteExpiredLeases", "")
+	if err != nil {
+		return err
+	}
+
+	_, err = q.db.ExecContext(ctx, query, ringID)
 	if err != nil {
 		return fmt.Errorf("failed to delete expired leases: %w", err)
 	}
@@ -321,9 +284,13 @@ func (q *Queries) DeleteExpiredLeases(ctx context.Context, ringID string) error 
 // ListProposals returns all proposals for a given predecessor position.
 func (q *Queries) ListProposals(ctx context.Context, ringID string, predecessorPos int) (proposals []*ProposalRecord, err error) {
 	var (
-		query = fmt.Sprintf(getProposalsSQL, q.tableName)
+		query string
 		rows  *sql.Rows
 	)
+	query, err = q.renderQuery("listProposals", "")
+	if err != nil {
+		return nil, err
+	}
 	rows, err = q.db.QueryContext(ctx, query, ringID, predecessorPos)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list proposals: %w", err)
@@ -363,10 +330,11 @@ func (q *Queries) ListProposalsForPredecessors(ctx context.Context, ringID strin
 		args = append(args, position)
 	}
 
-	var (
-		query = fmt.Sprintf(getProposalsForPredecessorsSQL, q.tableName, strings.Join(placeholders, ", "))
-		rows  *sql.Rows
-	)
+	var rows *sql.Rows
+	query, err := q.renderQuery("listProposalsForPredecessors", strings.Join(placeholders, ", "))
+	if err != nil {
+		return nil, err
+	}
 	rows, err = q.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list proposals for predecessors: %w", err)
@@ -391,8 +359,12 @@ func (q *Queries) ListProposalsForPredecessors(ctx context.Context, ringID strin
 
 // SetProposal inserts or updates a proposal.
 func (q *Queries) SetProposal(ctx context.Context, proposal *ProposalRecord) error {
-	query := fmt.Sprintf(setProposalSQL, q.tableName)
-	_, err := q.db.ExecContext(ctx, query,
+	query, err := q.renderQuery("setProposal", "")
+	if err != nil {
+		return err
+	}
+
+	_, err = q.db.ExecContext(ctx, query,
 		proposal.RingID, proposal.PredecessorPos, proposal.NewNodeID,
 		proposal.NewVNodeIdx, proposal.ProposedPos, proposal.ExpiresAt,
 	)
@@ -404,8 +376,12 @@ func (q *Queries) SetProposal(ctx context.Context, proposal *ProposalRecord) err
 
 // DeleteProposal removes a proposal.
 func (q *Queries) DeleteProposal(ctx context.Context, ringID string, predecessorPos int, newNodeID string, newVNodeIdx int) error {
-	query := fmt.Sprintf(deleteProposalSQL, q.tableName)
-	_, err := q.db.ExecContext(ctx, query, ringID, predecessorPos, newNodeID, newVNodeIdx)
+	query, err := q.renderQuery("deleteProposal", "")
+	if err != nil {
+		return err
+	}
+
+	_, err = q.db.ExecContext(ctx, query, ringID, predecessorPos, newNodeID, newVNodeIdx)
 	if err != nil {
 		return fmt.Errorf("failed to delete proposal: %w", err)
 	}
@@ -414,8 +390,12 @@ func (q *Queries) DeleteProposal(ctx context.Context, ringID string, predecessor
 
 // DeleteExpiredProposals removes all expired proposals for a ring.
 func (q *Queries) DeleteExpiredProposals(ctx context.Context, ringID string) error {
-	query := fmt.Sprintf(deleteExpiredProposalsSQL, q.tableName)
-	_, err := q.db.ExecContext(ctx, query, ringID)
+	query, err := q.renderQuery("deleteExpiredProposals", "")
+	if err != nil {
+		return err
+	}
+
+	_, err = q.db.ExecContext(ctx, query, ringID)
 	if err != nil {
 		return fmt.Errorf("failed to delete expired proposals: %w", err)
 	}

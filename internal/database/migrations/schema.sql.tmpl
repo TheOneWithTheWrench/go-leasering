@@ -1,0 +1,34 @@
+{{ define "createLeasesTable" -}}
+CREATE TABLE IF NOT EXISTS {{ .LeasesTable }} (
+    ring_id       VARCHAR       NOT NULL,
+    position      INTEGER       NOT NULL,
+    node_id       VARCHAR       NOT NULL,
+    vnode_idx     INTEGER       NOT NULL,
+    expires_at    TIMESTAMPTZ   NOT NULL,
+
+    PRIMARY KEY (ring_id, position)
+);
+{{- end }}
+
+{{ define "createProposalsTable" -}}
+CREATE TABLE IF NOT EXISTS {{ .ProposalsTable }} (
+    ring_id           VARCHAR       NOT NULL,
+    predecessor_pos   INTEGER       NOT NULL,
+    new_node_id       VARCHAR       NOT NULL,
+    new_vnode_idx     INTEGER       NOT NULL,
+    proposed_pos      INTEGER       NOT NULL,
+    expires_at        TIMESTAMPTZ   NOT NULL,
+
+    PRIMARY KEY (ring_id, predecessor_pos, new_node_id, new_vnode_idx)
+);
+{{- end }}
+
+{{ define "createLeasesActiveIndex" -}}
+CREATE INDEX IF NOT EXISTS {{ .LeasesActiveIndex }}
+ON {{ .LeasesTable }} (ring_id, position, expires_at);
+{{- end }}
+
+{{ define "createProposalsExpiresIndex" -}}
+CREATE INDEX IF NOT EXISTS {{ .ProposalsExpiresIndex }}
+ON {{ .ProposalsTable }} (ring_id, expires_at);
+{{- end }}

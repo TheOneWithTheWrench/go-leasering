@@ -1,0 +1,112 @@
+{{ define "listActiveLeases" -}}
+SELECT ring_id, position, node_id, vnode_idx, expires_at
+FROM {{ .LeasesTable }}
+WHERE ring_id = $1
+  AND expires_at > NOW()
+ORDER BY position ASC;
+{{- end }}
+
+{{ define "getLease" -}}
+SELECT ring_id, position, node_id, vnode_idx, expires_at
+FROM {{ .LeasesTable }}
+WHERE ring_id = $1 AND position = $2;
+{{- end }}
+
+{{ define "getActiveLeases" -}}
+SELECT ring_id, position, node_id, vnode_idx, expires_at
+FROM {{ .LeasesTable }}
+WHERE ring_id = $1
+  AND position IN ({{ .PositionPlaceholders }})
+  AND expires_at > NOW();
+{{- end }}
+
+{{ define "setLease" -}}
+INSERT INTO {{ .LeasesTable }} (ring_id, position, node_id, vnode_idx, expires_at)
+VALUES ($1, $2, $3, $4, $5)
+ON CONFLICT (ring_id, position)
+DO UPDATE SET
+    node_id = EXCLUDED.node_id,
+    vnode_idx = EXCLUDED.vnode_idx,
+    expires_at = EXCLUDED.expires_at;
+{{- end }}
+
+{{ define "insertLease" -}}
+INSERT INTO {{ .LeasesTable }} (ring_id, position, node_id, vnode_idx, expires_at)
+VALUES ($1, $2, $3, $4, $5);
+{{- end }}
+
+{{ define "insertLeaseIfTargetOwned" -}}
+INSERT INTO {{ .LeasesTable }} (ring_id, position, node_id, vnode_idx, expires_at)
+SELECT $1::varchar, $2::integer, $3::varchar, $4::integer, $5::timestamptz
+WHERE EXISTS (
+    SELECT 1
+    FROM {{ .LeasesTable }}
+    WHERE ring_id = $1
+      AND position = $6
+      AND node_id = $7
+      AND expires_at > NOW()
+)
+ON CONFLICT (ring_id, position)
+DO UPDATE SET
+    node_id = EXCLUDED.node_id,
+    vnode_idx = EXCLUDED.vnode_idx,
+    expires_at = EXCLUDED.expires_at
+WHERE {{ .LeasesTable }}.expires_at <= NOW();
+{{- end }}
+
+{{ define "renewLease" -}}
+UPDATE {{ .LeasesTable }}
+SET expires_at = $5
+WHERE ring_id = $1
+  AND position = $2
+  AND node_id = $3
+  AND vnode_idx = $4
+  AND expires_at > NOW();
+{{- end }}
+
+{{ define "deleteLeaseIfOwned" -}}
+DELETE FROM {{ .LeasesTable }}
+WHERE ring_id = $1
+  AND position = $2
+  AND node_id = $3;
+{{- end }}
+
+{{ define "deleteExpiredLeases" -}}
+DELETE FROM {{ .LeasesTable }}
+WHERE ring_id = $1
+  AND expires_at <= NOW();
+{{- end }}
+
+{{ define "listProposals" -}}
+SELECT ring_id, predecessor_pos, new_node_id, new_vnode_idx, proposed_pos, expires_at
+FROM {{ .ProposalsTable }}
+WHERE ring_id = $1 AND predecessor_pos = $2;
+{{- end }}
+
+{{ define "listProposalsForPredecessors" -}}
+SELECT ring_id, predecessor_pos, new_node_id, new_vnode_idx, proposed_pos, expires_at
+FROM {{ .ProposalsTable }}
+WHERE ring_id = $1
+  AND predecessor_pos IN ({{ .PositionPlaceholders }})
+  AND expires_at > NOW();
+{{- end }}
+
+{{ define "setProposal" -}}
+INSERT INTO {{ .ProposalsTable }} (ring_id, predecessor_pos, new_node_id, new_vnode_idx, proposed_pos, expires_at)
+VALUES ($1, $2, $3, $4, $5, $6)
+ON CONFLICT (ring_id, predecessor_pos, new_node_id, new_vnode_idx)
+DO UPDATE SET
+    proposed_pos = EXCLUDED.proposed_pos,
+    expires_at = EXCLUDED.expires_at;
+{{- end }}
+
+{{ define "deleteProposal" -}}
+DELETE FROM {{ .ProposalsTable }}
+WHERE ring_id = $1 AND predecessor_pos = $2 AND new_node_id = $3 AND new_vnode_idx = $4;
+{{- end }}
+
+{{ define "deleteExpiredProposals" -}}
+DELETE FROM {{ .ProposalsTable }}
+WHERE ring_id = $1
+  AND expires_at <= NOW();
+{{- end }}
