@@ -53,6 +53,13 @@ SELECT ring_id, position, node_id, vnode_idx, expires_at
 FROM %s_leases
 WHERE ring_id = $1 AND position = $2;`
 
+	getActiveLeasesSQL = `
+SELECT ring_id, position, node_id, vnode_idx, expires_at
+FROM %s_leases
+WHERE ring_id = $1
+  AND position IN (%s)
+  AND expires_at > NOW();`
+
 	setLeaseSQL = `
 INSERT INTO %s_leases (ring_id, position, node_id, vnode_idx, expires_at)
 VALUES ($1, $2, $3, $4, $5)
@@ -172,6 +179,48 @@ func (q *Queries) GetLease(ctx context.Context, ringID string, position int) (*L
 	}
 
 	return &lease, nil
+}
+
+// GetActiveLeases retrieves non-expired leases by position.
+func (q *Queries) GetActiveLeases(ctx context.Context, ringID string, positions []int) (leases []*LeaseRecord, err error) {
+	if len(positions) == 0 {
+		return nil, nil
+	}
+
+	var (
+		placeholders = make([]string, len(positions))
+		args         = make([]any, 0, len(positions)+1)
+	)
+	args = append(args, ringID)
+
+	for i, position := range positions {
+		placeholders[i] = fmt.Sprintf("$%d", i+2)
+		args = append(args, position)
+	}
+
+	var (
+		query = fmt.Sprintf(getActiveLeasesSQL, q.tableName, strings.Join(placeholders, ", "))
+		rows  *sql.Rows
+	)
+	rows, err = q.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get active leases: %w", err)
+	}
+	defer closeRows(rows, &err)
+
+	for rows.Next() {
+		var lease LeaseRecord
+		if err := rows.Scan(&lease.RingID, &lease.Position, &lease.NodeID, &lease.VNodeIdx, &lease.ExpiresAt); err != nil {
+			return nil, fmt.Errorf("failed to scan active lease: %w", err)
+		}
+		leases = append(leases, &lease)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("row iteration error: %w", err)
+	}
+
+	return leases, nil
 }
 
 // SetLease inserts or updates a lease.

@@ -168,13 +168,18 @@ func (m *membership) deleteProposals(ctx context.Context, proposals []*proposal)
 // CheckJoinConfirmation verifies if this node's join proposals have been accepted.
 func (m *membership) CheckJoinConfirmation(ctx context.Context) (bool, error) {
 	positions := m.ring.getMyVNodePositions()
+	activeLeases, err := m.store.GetActiveLeases(ctx, positions)
+	if err != nil {
+		return false, fmt.Errorf("failed to get active leases: %w", err)
+	}
+
+	leasesByPosition := make(map[int]*lease, len(activeLeases))
+	for _, lease := range activeLeases {
+		leasesByPosition[lease.Position] = lease
+	}
 
 	for _, position := range positions {
-		lease, err := m.store.GetLease(ctx, position)
-		if err != nil {
-			return false, fmt.Errorf("failed to get lease: %w", err)
-		}
-
+		lease := leasesByPosition[position]
 		if lease == nil || lease.NodeID != m.nodeID {
 			return false, nil
 		}

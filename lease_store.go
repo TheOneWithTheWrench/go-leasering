@@ -61,6 +61,25 @@ func (ls *leaseStore) GetLease(ctx context.Context, position int) (*lease, error
 	}, nil
 }
 
+func (ls *leaseStore) GetActiveLeases(ctx context.Context, positions []int) ([]*lease, error) {
+	var records, err = ls.queries.GetActiveLeases(ctx, ls.ringID, positions)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get active leases: %w", err)
+	}
+
+	var leases = make([]*lease, len(records))
+	for i, record := range records {
+		leases[i] = &lease{
+			Position:  record.Position,
+			NodeID:    record.NodeID,
+			VNodeIdx:  record.VNodeIdx,
+			ExpiresAt: record.ExpiresAt,
+		}
+	}
+
+	return leases, nil
+}
+
 // SetLease writes a lease to the database (upsert - will overwrite existing lease).
 func (ls *leaseStore) SetLease(ctx context.Context, lease *lease) error {
 	var record = &database.LeaseRecord{

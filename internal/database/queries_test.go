@@ -103,6 +103,47 @@ WHERE schemaname = current_schema()
 		assert.Nil(t, retrieved)
 	})
 
+	t.Run("should get active leases", func(t *testing.T) {
+		// Arrange
+		var (
+			sut   = newDb(t)
+			ctx   = newCtx()
+			lease = newLease("ring-1", 100, "node-1", 0)
+		)
+
+		err := sut.SetLease(ctx, lease)
+		require.NoError(t, err)
+
+		// Act
+		var retrieved, getErr = sut.GetActiveLeases(ctx, "ring-1", []int{100, 200})
+
+		// Assert
+		require.NoError(t, getErr)
+		require.Len(t, retrieved, 1)
+		assert.Equal(t, lease.NodeID, retrieved[0].NodeID)
+		assert.Equal(t, lease.VNodeIdx, retrieved[0].VNodeIdx)
+	})
+
+	t.Run("should exclude expired active leases", func(t *testing.T) {
+		// Arrange
+		var (
+			sut   = newDb(t)
+			ctx   = newCtx()
+			lease = newLease("ring-1", 100, "node-1", 0)
+		)
+		lease.ExpiresAt = time.Now().Add(-1 * time.Second)
+
+		err := sut.SetLease(ctx, lease)
+		require.NoError(t, err)
+
+		// Act
+		var retrieved, getErr = sut.GetActiveLeases(ctx, "ring-1", []int{100})
+
+		// Assert
+		require.NoError(t, getErr)
+		assert.Empty(t, retrieved)
+	})
+
 	t.Run("should list leases ordered by position", func(t *testing.T) {
 		// Arrange
 		var (
