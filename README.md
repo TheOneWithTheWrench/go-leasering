@@ -66,6 +66,12 @@ See `cmd/ringnode/README.md` for more details.
 
 The ring has a fixed partition space of `0..1023`. Each process owns one or more virtual nodes. A vnode is a point on the ring backed by a PostgreSQL lease.
 
+### Consistency Model
+
+`go-leasering` provides eventually consistent partition ownership. During joins, graceful leaves, crashes, lease expiry, and database connectivity changes, different processes can temporarily have stale cached ownership views. That means transient overlap or short ownership gaps are possible until nodes refresh from PostgreSQL and the ring converges.
+
+Callers should treat `GetOwnedPartitions()` as a local, best-effort assignment view. Work processed for a partition should be idempotent, deduplicated, or protected by an application-level fencing/claiming mechanism if strict single execution is required.
+
 Example topology with two vnodes:
 
 ```text
@@ -111,7 +117,7 @@ After:
 
 `A` is only the predecessor/range boundary. It is not the node giving up work.
 
-The current owner (`B`) must accept the join because it is the node that has to stop serving `(100,300]`. To preserve at-most-one ownership, the accepting node removes the transferred partitions from its local ownership before activating the new lease for `X`. This can create a short availability gap during handoff, but avoids two nodes processing the same partition.
+The current owner (`B`) accepts the join because it is the node that gives up `(100,300]`. The accepting node removes the transferred partitions from its local ownership before activating the new lease for `X`, which reduces overlap in the common case. This is still an eventually consistent protocol, so callers must tolerate temporary stale ownership views during topology changes.
 
 ### Lifecycle
 

@@ -2,6 +2,8 @@
 
 A command-line demonstration of the go-lease-ring library. Run multiple instances to see nodes join a distributed consistent hashing ring and coordinate partition ownership through PostgreSQL.
 
+The demo shows the library's eventually consistent ownership model. During joins, crashes, and reconnects, nodes can briefly display stale ownership until they refresh from PostgreSQL and converge.
+
 ## Prerequisites
 
 - Docker and Docker Compose (for test database)
