@@ -456,6 +456,7 @@ func TestIntegration(t *testing.T) {
 		// Node-2 gracefully stops
 		err = node2.Stop(ctx)
 		require.NoError(t, err)
+		assert.Empty(t, node2.GetOwnedPartitions(), "node2 should not report owned partitions after Stop")
 
 		// Verify node-2's leases are removed immediately
 		leases, listErr := queries.ListLeases(ctx, testRingID)

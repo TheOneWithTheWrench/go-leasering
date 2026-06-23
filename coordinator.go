@@ -118,7 +118,12 @@ func (c *coordinator) stop(ctx context.Context) error {
 	}
 
 	// Remove all leases
-	return c.membership.Leave(ctx)
+	if err := c.membership.Leave(ctx); err != nil {
+		return err
+	}
+
+	c.ring.clearOwnedPartitions()
+	return nil
 }
 
 // waitForJoinConfirmation polls until all vnodes have active leases or timeout.
