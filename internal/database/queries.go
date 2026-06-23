@@ -83,7 +83,13 @@ WHERE EXISTS (
       AND position = $6
       AND node_id = $7
       AND expires_at > NOW()
-);`
+)
+ON CONFLICT (ring_id, position)
+DO UPDATE SET
+    node_id = EXCLUDED.node_id,
+    vnode_idx = EXCLUDED.vnode_idx,
+    expires_at = EXCLUDED.expires_at
+WHERE %s_leases.expires_at <= NOW();`
 
 	renewLeaseSQL = `
 UPDATE %s_leases
@@ -250,7 +256,7 @@ func (q *Queries) InsertLease(ctx context.Context, lease *LeaseRecord) error {
 
 // InsertLeaseIfTargetOwned inserts a lease only if the accepter still owns an active target lease.
 func (q *Queries) InsertLeaseIfTargetOwned(ctx context.Context, lease *LeaseRecord, targetPos int, accepterNodeID string) error {
-	query := fmt.Sprintf(insertLeaseIfTargetOwnedSQL, q.tableName, q.tableName)
+	query := fmt.Sprintf(insertLeaseIfTargetOwnedSQL, q.tableName, q.tableName, q.tableName)
 	result, err := q.db.ExecContext(ctx, query,
 		lease.RingID, lease.Position, lease.NodeID, lease.VNodeIdx, lease.ExpiresAt, targetPos, accepterNodeID,
 	)

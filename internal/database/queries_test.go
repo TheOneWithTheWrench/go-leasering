@@ -439,6 +439,36 @@ WHERE schemaname = current_schema()
 		assert.Equal(t, existing.NodeID, retrieved.NodeID)
 	})
 
+	t.Run("should replace expired lease at proposed position", func(t *testing.T) {
+		// Arrange
+		var (
+			sut         = newDb(t)
+			ctx         = newCtx()
+			predecessor = newLease("ring-1", 100, "node-1", 0)
+			existing    = newLease("ring-1", 150, "node-old", 0)
+			lease       = newLease("ring-1", 150, "node-2", 0)
+		)
+		existing.ExpiresAt = time.Now().Add(-1 * time.Second)
+
+		err := sut.SetLease(ctx, predecessor)
+		require.NoError(t, err)
+
+		err = sut.SetLease(ctx, existing)
+		require.NoError(t, err)
+
+		// Act
+		err = sut.InsertLeaseIfTargetOwned(ctx, lease, predecessor.Position, predecessor.NodeID)
+
+		var retrieved, getErr = sut.GetLease(ctx, "ring-1", 150)
+
+		// Assert
+		require.NoError(t, err)
+		require.NoError(t, getErr)
+		require.NotNil(t, retrieved)
+		assert.Equal(t, lease.NodeID, retrieved.NodeID)
+		assert.Equal(t, lease.VNodeIdx, retrieved.VNodeIdx)
+	})
+
 	t.Run("should delete lease when owned by node", func(t *testing.T) {
 		// Arrange
 		var (
