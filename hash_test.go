@@ -1,6 +1,8 @@
 package leasering
 
 import (
+	"fmt"
+	"sort"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -37,4 +39,61 @@ func TestHashNodePosition(t *testing.T) {
 			assert.Less(t, pos, ringSize, "position should be < ringSize")
 		}
 	})
+
+	t.Run("distributes three nodes reasonably with default settings", func(t *testing.T) {
+		var (
+			nodeIDs    = []string{"node-a", "node-b", "node-c"}
+			vnodeCount = 8
+			owned      = ownedPartitionCountsForHash(nodeIDs, vnodeCount, ringSize)
+			counts     []int
+		)
+
+		for _, nodeID := range nodeIDs {
+			counts = append(counts, owned[nodeID])
+		}
+		sort.Ints(counts)
+
+		assert.GreaterOrEqual(t, counts[0], 100)
+		assert.LessOrEqual(t, counts[len(counts)-1], 600)
+	})
+}
+
+func ownedPartitionCountsForHash(nodeIDs []string, vnodeCount int, ringSize int) map[string]int {
+	type vnode struct {
+		nodeID   string
+		position int
+	}
+
+	var vnodes []vnode
+	for _, nodeID := range nodeIDs {
+		for i := range vnodeCount {
+			vnodes = append(vnodes, vnode{
+				nodeID:   nodeID,
+				position: hashNodePosition(nodeID, i, ringSize),
+			})
+		}
+	}
+
+	sort.Slice(vnodes, func(i, j int) bool {
+		if vnodes[i].position == vnodes[j].position {
+			return vnodes[i].nodeID < vnodes[j].nodeID
+		}
+		return vnodes[i].position < vnodes[j].position
+	})
+
+	owned := make(map[string]int, len(nodeIDs))
+	for i, vnode := range vnodes {
+		previous := vnodes[(i-1+len(vnodes))%len(vnodes)].position
+		if previous == vnode.position {
+			panic(fmt.Sprintf("hash collision at position %d", vnode.position))
+		}
+
+		partitions := vnode.position - previous
+		if partitions < 0 {
+			partitions += ringSize
+		}
+		owned[vnode.nodeID] += partitions
+	}
+
+	return owned
 }

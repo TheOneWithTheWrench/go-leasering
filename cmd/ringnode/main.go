@@ -25,7 +25,7 @@ var (
 )
 
 func main() {
-	var rootCmd = &cobra.Command{
+	rootCmd := &cobra.Command{
 		Use:   "ringnode",
 		Short: "A distributed consistent hashing ring node",
 		Long: `Ringnode is a demonstration of the go-lease-ring library.
@@ -92,11 +92,11 @@ func runNode(cmd *cobra.Command, args []string) error {
 	printStatus(ring, isConnected)
 
 	// Set up periodic status updates
-	var ticker = time.NewTicker(1 * time.Second)
+	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
 
 	// Set up signal handling for graceful shutdown
-	var sigCh = make(chan os.Signal, 1)
+	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
 
 	// Initialize keyboard
@@ -106,7 +106,7 @@ func runNode(cmd *cobra.Command, args []string) error {
 	defer keyboard.Close()
 
 	// Keyboard input channel
-	var keyCh = make(chan rune)
+	keyCh := make(chan rune)
 	go func() {
 		for {
 			char, _, err := keyboard.GetKey()
